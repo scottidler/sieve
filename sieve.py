@@ -95,6 +95,13 @@ def pf(obj):
 def pp(obj):
     print(pf(obj))
 
+def tuplify(obj):
+    if obj is None:
+        return None
+    if isinstance(obj, list):
+        return tuple(obj)
+    return tuple([obj])
+
 def compare(item, test):
     if item:
         return item == test
@@ -118,14 +125,21 @@ class Message:
         self.snippet = snippet
         self.threadId = threadId
 
+    __repr__ = __repr__
+
     @property
     def subject(self):
         return self.headers['subject']
 
     @property
     @lru_cache()
+    def fr(self):
+        return filter_emails(self.headers['from'])[0]
+
+    @property
+    @lru_cache()
     def to(self):
-        return filter_emails(self.headers['to'])
+        return filter_emails(self.headers.get('to', []))
 
     @property
     @lru_cache()
@@ -136,11 +150,6 @@ class Message:
     @lru_cache()
     def bcc(self):
         return filter_emails(self.headers.get('bcc', []))
-
-    @property
-    @lru_cache()
-    def fr(self):
-        return filter_emails(self.headers['from'])[0]
 
     @property
     def prescedence(self):
@@ -172,6 +181,8 @@ class Thread:
         self.messages = [Message(thread=self, **message) for message in messages]
         self.snippet = snippet
 
+    __repr__ = __repr__
+
     @lru_cache()
     def any_label(self, key, test):
         return any([message.labels.get(key) == test for message in self.messages])
@@ -179,7 +190,6 @@ class Thread:
     @lru_cache()
     def any_header(self, key, test):
         return any([message.header.get(key) == test for message in self.messages])
-
 
     @lru_cache()
     def to(self, test):
@@ -196,6 +206,20 @@ class Thread:
     @lru_cache()
     def fr(self, test):
         return any([message.fr == test for message in self.messages])
+
+class Filter(dict):
+    def __init__(self, name=None, fr=None, to=None, cc=None, bcc=None, precedence=None, actions=None, **headers):
+        dict.__init__(
+            self,
+            name=name,
+            fr=fr,
+            to=tuplify(to),
+            cc=tuplify(cc),
+            bcc=tuplify(bcc),
+            precedence=precedence,
+            actions=actions,
+            **headers,
+        )
 
 class Sieve:
     def __init__(self, creds_json, sieve_yml, **kwargs):
@@ -249,31 +273,42 @@ class Sieve:
             for key, value
             in yaml.safe_load(open(sieve_yml)).items()
         })
-        filters = cfg.pop('filters', [])
-        spammers = cfg.pop('spammers')
-        cfg.filters = [
-            Addict(name=to, to=to, action=['archive', f'_/{to}'])
-            for to
-            in spammers.to
-        ]
-        cfg.filters += [
-            Addict(name=fr, fr=fr, action=['archive', f'_/{fr}'])
-            for fr
-            in spammers.fr
-        ]
-        cfg.filters += [
-            Addict(name=name, **body)
-            for name, body
-            in [head_body(f) for f in filters]
-        ]
+        self.filters = []
+        if cfg.spammers.fr:
+            self.filters += [
+                Filter(name=f'spammer-{fr}', fr=fr, actions=['archive', f'_/{fr}'])
+                for fr
+                in cfg.spammers.fr
+            ]
+        if cfg.spammers.to:
+            self.filters += [
+                Filter(name=f'spammer-{to}', to=tuplify(to), actions=['archive', f'_/{to}'])
+                for to
+                in cfg.spammers.to
+            ]
+        if cfg.filters:
+            self.filters += [
+                    Filter(
+                        name=name,
+                        fr=body.get('fr'),
+                        to=tuplify(body.get('to')),
+                        cc=tuplify(body.get('cc')),
+                        bcc=tuplify(body.get('bcc')),
+                        precedence=body.get('precedence'),
+                        actions=body.get('actions'),
+                        headers={},
+                    )
+                for name, body
+                in [head_body(f) for f in cfg.filters]
+            ]
         self.cfg = cfg
 
     def show_filters(self):
-        pp(self.cfg.filters)
+        pp(self.filters)
 
     def run(self):
-        #gmail = build('gmail', 'v1', credentials=self.creds)
-        #threads_api = gmail.users().threads()
+        print('self.filters =', self.filters)
+        pp(dict(filters=self.filters))
         pp(dict(labels=self.labels))
         threads_req = self.threads_api.list(q=self.cfg.query, userId='me', maxResults=self.cfg.max_results)
         while threads_req:
@@ -281,11 +316,10 @@ class Sieve:
             threads = threads_res.get('threads', [])
             print('len(threads) =', len(threads))
             for thread in threads:
-                thread = self.threads_api.get(userId='me', id=thread['id'], format='metadata', metadataHeaders=METADATA_HEADERS).execute()
-                t = Thread(sieve=self, **thread)
-                for message in t.messages:
+                thread = Thread(sieve=self, **self.threads_api.get(userId='me', id=thread['id'], format='metadata', metadataHeaders=METADATA_HEADERS).execute())
+                for message in thread.messages:
                     print('subject =', message.subject)
-                    if not t.to(tuple(['scott.idler@tatari.tv'])):
+                    if thread.to(tuple(['scott.idler@tatari.tv'])) and thread.cc(tuple([])):
                         print('to =', message.to)
                         print('fr =', message.fr)
                         print('cc =', message.cc)
@@ -294,58 +328,9 @@ class Sieve:
                 print('*'*80)
 
             ## keep searching until None
-            threads_req = threads_api.list_next(threads_req, threads_res)
-
-
-
-#def sieves(path):
-#    return [
-#        item
-#        for item
-#        in os.listdir(path)
-#        if os.path.isdir(os.path.join(path, item))
-#    ]
+            threads_req = self.threads_api.list_next(threads_req, threads_res)
 
 def main(args):
-#    parser = ArgumentParser(
-#        description=__doc__,
-#        formatter_class=RawDescriptionHelpFormatter,
-#        add_help=False)
-#    parser.add_argument(
-#        '--config',
-#        metavar='FILEPATH',
-#        default='~/.config/%(NAME)s/%(NAME)s.yml' % globals(),
-#        help='default="%(default)s"; config filepath')
-#    ns, rem = parser.parse_known_args(args)
-#    try:
-#        config = dict([
-#            (k.replace('-', '_'), v)
-#            for k, v
-#            in yaml.safe_load(open(os.path.expanduser(ns.config))).items()
-#        ])
-#        config['config'] = ns.config
-#        config['creds'] = os.path.realpath(re.sub(r'^./', os.path.dirname(ns.config)+'/', config['creds']))
-#    except FileNotFoundError as er:
-#        config = dict()
-#    parser = ArgumentParser(
-#        parents=[parser])
-#    parser.set_defaults(**config)
-#    parser.add_argument(
-#        '--creds',
-#        help='default="%(default)s"; first name')
-#
-#    ns = parser.parse_args(rem)
-#    print(ns)
-
-#    base = os.path.expanduser('~/.config/%(NAME)s' % globals())
-#    parser = ArgumentParser()
-#    parser.add_argument(
-#        'sieve',
-#        choices=sieves(base),
-#        help='choose your sieve')
-#    ns = parser.parse_args()
-#    print(ns)
-
     parser = ArgumentParser()
     parser.add_argument(
         '--creds-json',
