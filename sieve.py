@@ -97,7 +97,7 @@ def pp(obj):
 
 def tuplify(obj):
     if obj is None:
-        return None
+        return ()
     if isinstance(obj, list):
         return tuple(obj)
     return tuple([obj])
@@ -110,7 +110,24 @@ def compare(item, test):
 def filter_emails(s, regex=re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b')):
     if s:
         return tuple(regex.findall(s))
-    return None
+    return ()
+
+class Comparator:
+    def __init__(self):
+        pass
+
+    def compare_emails_one_of_any(self, test, targets):
+        pass
+
+    def compare_email_any_of_one(self, tests, target):
+        pass
+
+    def compare_email(self, test, target):
+        if not '@' in test:
+            return compare_domain(target, test)
+
+    def compare_domain(self, target, domain):
+        pass
 
 class Message:
     def __init__(self, thread, id, historyId, internalDate, labelIds, payload, sizeEstimate, snippet, threadId, raw=None):
@@ -213,7 +230,7 @@ class Filter(dict):
             self,
             name=name,
             fr=fr,
-            to=tuplify(to),
+            to=to,
             cc=tuplify(cc),
             bcc=tuplify(bcc),
             precedence=precedence,
@@ -282,7 +299,7 @@ class Sieve:
             ]
         if cfg.spammers.to:
             self.filters += [
-                Filter(name=f'spammer-{to}', to=tuplify(to), actions=['archive', f'_/{to}'])
+                Filter(name=f'spammer-{to}', to=to, actions=['archive', f'_/{to}'])
                 for to
                 in cfg.spammers.to
             ]
@@ -291,9 +308,9 @@ class Sieve:
                     Filter(
                         name=name,
                         fr=body.get('fr'),
-                        to=tuplify(body.get('to')),
-                        cc=tuplify(body.get('cc')),
-                        bcc=tuplify(body.get('bcc')),
+                        to=body.get('to'),
+                        cc=body.get('cc'),
+                        bcc=body.get('bcc'),
                         precedence=body.get('precedence'),
                         actions=body.get('actions'),
                         headers={},
@@ -319,12 +336,11 @@ class Sieve:
                 thread = Thread(sieve=self, **self.threads_api.get(userId='me', id=thread['id'], format='metadata', metadataHeaders=METADATA_HEADERS).execute())
                 for message in thread.messages:
                     print('subject =', message.subject)
-                    if thread.to(tuple(['scott.idler@tatari.tv'])) and thread.cc(tuple([])):
-                        print('to =', message.to)
-                        print('fr =', message.fr)
-                        print('cc =', message.cc)
-                        print('bcc =', message.bcc)
-                        print('labels =', message.labels)
+                    print('to =', message.to)
+                    print('fr =', message.fr)
+                    print('cc =', message.cc)
+                    print('bcc =', message.bcc)
+                    print('labels =', message.labels)
                 print('*'*80)
 
             ## keep searching until None
