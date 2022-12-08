@@ -117,17 +117,23 @@ class Comparator:
         pass
 
     def compare_emails_one_of_any(self, test, targets):
-        pass
+        if fuzzy(targets).include(test):
+            return True
+        return False
 
     def compare_email_any_of_one(self, tests, target):
-        pass
+        if fuzzy([target]).include(tests):
+            return True
+        return False
 
     def compare_email(self, test, target):
         if not '@' in test:
             return compare_domain(target, test)
 
     def compare_domain(self, target, domain):
-        pass
+        if fuzzy([target]).include([test]):
+            return True
+        return False
 
 class Message:
     def __init__(self, thread, id, historyId, internalDate, labelIds, payload, sizeEstimate, snippet, threadId, raw=None):
