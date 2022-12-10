@@ -100,6 +100,8 @@ def tuplify(obj):
         return ()
     if isinstance(obj, list):
         return tuple(obj)
+    elif isinstance(obj, tuple):
+        return obj
     return tuple([obj])
 
 def compare(item, test):
@@ -340,34 +342,29 @@ class Sieve:
             print('len(threads) =', len(threads))
             for thread in threads:
                 thread = Thread(sieve=self, **self.threads_api.get(userId='me', id=thread['id'], format='metadata', metadataHeaders=METADATA_HEADERS).execute())
-                for m in thread.messages:
-                    assert isinstance(m.fr, str, 'fr')
-                    assert isinstance(m.to, tuple, 'to')
-                    assert isinstance(m.cc, tuple, 'cc')
-                    assert isinstance(m.bcc, tuple, 'bcc')
+                pp(dict(filters=self.filters))
+                for message in thread.messages:
+                    pp(dict(headers=message.headers, labels=message.labels))
 
                 for f in self.filters:
                     result = False
                     if f.fr:
+                        dbg(f_fr=f.fr)
                         fr = any([FuzzyList(m.fr).include(*f.fr) for m in thread.messages])
-                        dbg(fr_result=fr, fr=f.fr)
+                        dbg(fr)
                     if f.to:
+                        dbg(f_to=f.to)
                         to = any([FuzzyList(m.to).include(f.to) for m in thread.messages])
-                        dbg(to_result=to, to=f.to)
+                        dbg(to)
                     if f.cc:
+                        dbg(f_cc=f.cc)
                         cc = any([FuzzyList(m.cc).include(*f.cc) for m in thread.messages])
-                        dbg(cc_result=cc, cc=f.cc)
+                        dbg(cc)
                     if f.bcc:
+                        dbg(f_bcc=f.bcc)
                         bcc = any([FuzzyList(m.bcc).include(*f.bcc) for m in thread.messages])
-                        dbg(bcc_result=bcc, bcc=f.bcc)
+                        dbg(bcc)
 
-                for message in thread.messages:
-                    print('subject =', message.subject)
-                    print('to =', message.to)
-                    #print('fr =', message.fr)
-                    #print('cc =', message.cc)
-                    #print('bcc =', message.bcc)
-                    pp(dict(headers=message.headers, labels=message.labels))
                 print('*'*80)
 
             ## keep searching until None
