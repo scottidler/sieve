@@ -35,7 +35,7 @@ from typing import List, Dict
 from functools import lru_cache
 
 from leatherman.dictionary import head_body
-from leatherman.fuzzy import fuzzy
+from leatherman.fuzzy import fuzzy, FuzzyList
 from leatherman.repr import __repr__
 from leatherman.dbg import dbg
 
@@ -162,17 +162,17 @@ class Message:
     @property
     @lru_cache()
     def to(self):
-        return filter_emails(self.headers.get('to', []))
+        return filter_emails(self.headers.get('to', ()))
 
     @property
     @lru_cache()
     def cc(self):
-        return filter_emails(self.headers.get('cc', []))
+        return filter_emails(self.headers.get('cc', ()))
 
     @property
     @lru_cache()
     def bcc(self):
-        return filter_emails(self.headers.get('bcc', []))
+        return filter_emails(self.headers.get('bcc', ()))
 
     @property
     def prescedence(self):
@@ -182,7 +182,7 @@ class Message:
     @lru_cache()
     def labels(self):
         return {
-                id: self.thread.sieve.labels[id]
+            id: self.thread.sieve.labels[id]
             for id
             in self.labelIds
         }
@@ -230,7 +230,7 @@ class Thread:
     def fr(self, test):
         return any([message.fr == test for message in self.messages])
 
-class Filter(dict):
+class Filter(Addict):
     def __init__(self, name=None, fr=None, to=None, cc=None, bcc=None, precedence=None, actions=None, **headers):
         dict.__init__(
             self,
@@ -313,10 +313,10 @@ class Sieve:
             self.filters += [
                     Filter(
                         name=name,
-                        fr=body.get('fr'),
+                        fr=tuplify(body.get('fr')),
                         to=body.get('to'),
-                        cc=body.get('cc'),
-                        bcc=body.get('bcc'),
+                        cc=tuplify(body.get('cc')),
+                        bcc=tuplify(body.get('bcc')),
                         precedence=body.get('precedence'),
                         actions=body.get('actions'),
                         headers={},
@@ -340,13 +340,34 @@ class Sieve:
             print('len(threads) =', len(threads))
             for thread in threads:
                 thread = Thread(sieve=self, **self.threads_api.get(userId='me', id=thread['id'], format='metadata', metadataHeaders=METADATA_HEADERS).execute())
+                for m in thread.messages:
+                    assert isinstance(m.fr, str, 'fr')
+                    assert isinstance(m.to, tuple, 'to')
+                    assert isinstance(m.cc, tuple, 'cc')
+                    assert isinstance(m.bcc, tuple, 'bcc')
+
+                for f in self.filters:
+                    result = False
+                    if f.fr:
+                        fr = any([FuzzyList(m.fr).include(*f.fr) for m in thread.messages])
+                        dbg(fr_result=fr, fr=f.fr)
+                    if f.to:
+                        to = any([FuzzyList(m.to).include(f.to) for m in thread.messages])
+                        dbg(to_result=to, to=f.to)
+                    if f.cc:
+                        cc = any([FuzzyList(m.cc).include(*f.cc) for m in thread.messages])
+                        dbg(cc_result=cc, cc=f.cc)
+                    if f.bcc:
+                        bcc = any([FuzzyList(m.bcc).include(*f.bcc) for m in thread.messages])
+                        dbg(bcc_result=bcc, bcc=f.bcc)
+
                 for message in thread.messages:
                     print('subject =', message.subject)
                     print('to =', message.to)
-                    print('fr =', message.fr)
-                    print('cc =', message.cc)
-                    print('bcc =', message.bcc)
-                    print('labels =', message.labels)
+                    #print('fr =', message.fr)
+                    #print('cc =', message.cc)
+                    #print('bcc =', message.bcc)
+                    pp(dict(headers=message.headers, labels=message.labels))
                 print('*'*80)
 
             ## keep searching until None
