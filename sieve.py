@@ -326,7 +326,6 @@ class Sieve:
         pp(self.filters)
 
     def filter_thread(self, thread):
-        filters = []
         actions = []
         for f in self.filters:
             subject, fr, to, cc, bcc = [True]*5
@@ -341,32 +340,24 @@ class Sieve:
             if f.bcc:
                 bcc = any([FuzzyList(m.bcc).include(*f.bcc) for m in thread.messages])
             if subject and fr and to and cc and bcc:
-                filters += [f.name]
                 actions += f.actions
-        return filters, actions
+        return actions
 
     def run(self):
-        pp(dict(filters=self.filters))
-        pp(dict(labels=self.labels))
+        pp(dict(filters=self.filters, labels=self.labels))
         threads_req = self.threads_api.list(q=self.cfg.query, userId='me', maxResults=self.cfg.max_results)
+        actions = {}
         while threads_req:
             threads_res = threads_req.execute()
             threads = threads_res.get('threads', [])
             print('len(threads) =', len(threads))
             for thread in threads:
                 thread = Thread(sieve=self, **self.threads_api.get(userId='me', id=thread['id'], format='metadata', metadataHeaders=METADATA_HEADERS).execute())
-                filters, actions = self.filter_thread(thread)
-                if filters:
-                    pp(dict(
-                        subject=thread.subject,
-                        filters=filters,
-                        actions=actions
-                    ))
-
-                print('*'*80)
-
+                for action in self.filter_thread(thread):
+                    actions[action] = actions.get(action, []) + [thread.id]
             ## keep searching until None
             threads_req = self.threads_api.list_next(threads_req, threads_res)
+        pp(actions)
 
 def main(args):
     parser = ArgumentParser()
