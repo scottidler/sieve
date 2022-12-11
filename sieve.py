@@ -33,6 +33,7 @@ from itertools import chain
 from dataclasses import dataclass
 from typing import List, Dict
 from functools import lru_cache
+from collections import OrderedDict
 
 from leatherman.dictionary import head_body
 from leatherman.fuzzy import fuzzy, FuzzyList
@@ -109,33 +110,10 @@ def compare(item, test):
         return item == test
     return False
 
-def filter_emails(s, regex=re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b')):
+def format_emails(s, regex=re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b')):
     if s:
         return tuple(regex.findall(s))
     return ()
-
-class Comparator:
-    def __init__(self):
-        pass
-
-    def compare_emails_one_of_any(self, test, targets):
-        if fuzzy(targets).include(test):
-            return True
-        return False
-
-    def compare_email_any_of_one(self, tests, target):
-        if fuzzy([target]).include(tests):
-            return True
-        return False
-
-    def compare_email(self, test, target):
-        if not '@' in test:
-            return compare_domain(target, test)
-
-    def compare_domain(self, target, domain):
-        if fuzzy([target]).include([test]):
-            return True
-        return False
 
 class Message:
     def __init__(self, thread, id, historyId, internalDate, labelIds, payload, sizeEstimate, snippet, threadId, raw=None):
@@ -154,35 +132,42 @@ class Message:
 
     @property
     def subject(self):
+        '''subject: singular'''
         return self.headers['subject']
 
     @property
     @lru_cache()
     def fr(self):
-        return filter_emails(self.headers['from'])[0]
+        '''from: plural'''
+        return format_emails(self.headers['from'])
 
     @property
     @lru_cache()
     def to(self):
-        return filter_emails(self.headers.get('to', ()))
+        '''to: plural'''
+        return format_emails(self.headers.get('to'))
 
     @property
     @lru_cache()
     def cc(self):
-        return filter_emails(self.headers.get('cc', ()))
+        '''cc: plural'''
+        return format_emails(self.headers.get('cc'))
 
     @property
     @lru_cache()
     def bcc(self):
-        return filter_emails(self.headers.get('bcc', ()))
+        '''bcc: plural'''
+        return format_emails(self.headers.get('bcc'))
 
     @property
     def prescedence(self):
+        '''prescedence: singular'''
         return self.headers.get('prescedence')
 
     @property
     @lru_cache()
     def labels(self):
+        '''labels: plural'''
         return {
             id: self.thread.sieve.labels[id]
             for id
@@ -192,6 +177,7 @@ class Message:
     @property
     @lru_cache()
     def headers(self):
+        '''headers: plural'''
         return {
             h['name'].lower():h['value']
             for h
@@ -208,36 +194,43 @@ class Thread:
 
     __repr__ = __repr__
 
-    @lru_cache()
-    def any_label(self, key, test):
-        return any([message.labels.get(key) == test for message in self.messages])
+    @property
+    def subject(self):
+        '''subject: singular'''
+        return self.messages[0].subject
 
-    @lru_cache()
-    def any_header(self, key, test):
-        return any([message.header.get(key) == test for message in self.messages])
+    @property
+    def subjects(self):
+        '''subjects: plural'''
+        return tuple(m.subject for m in self.messages)
 
-    @lru_cache()
-    def to(self, test):
-        return any([message.to == test for message in self.messages])
+    @property
+    def frs(self):
+        '''frs: plural'''
+        return tuple(m.fr for m in self.messages)
 
-    @lru_cache()
-    def cc(self, test):
-        return any([message.cc == test for message in self.messages])
+    @property
+    def tos(self):
+        '''tos: plural'''
+        return tuple(m.to for m in self.messages)
 
-    @lru_cache()
-    def bcc(self, test):
-        return any([message.bcc == test for message in self.messages])
+    @property
+    def ccs(self):
+        '''ccs: plural'''
+        return tuple(m.cc for m in self.messages)
 
-    @lru_cache()
-    def fr(self, test):
-        return any([message.fr == test for message in self.messages])
+    @property
+    def bccs(self):
+        '''bccs: plural'''
+        return tuple(m.bcc for m in self.messages)
 
 class Filter(Addict):
-    def __init__(self, name=None, fr=None, to=None, cc=None, bcc=None, precedence=None, actions=None, **headers):
+    def __init__(self, name=None, subject=None, fr=None, to=None, cc=None, bcc=None, precedence=None, actions=None, **headers):
         dict.__init__(
             self,
             name=name,
-            fr=fr,
+            subject=subject,
+            fr=tuplify(fr),
             to=to,
             cc=tuplify(cc),
             bcc=tuplify(bcc),
@@ -315,6 +308,7 @@ class Sieve:
             self.filters += [
                     Filter(
                         name=name,
+                        subject=body.get('subject'),
                         fr=tuplify(body.get('fr')),
                         to=body.get('to'),
                         cc=tuplify(body.get('cc')),
@@ -331,8 +325,27 @@ class Sieve:
     def show_filters(self):
         pp(self.filters)
 
+    def filter_thread(self, thread):
+        filters = []
+        actions = []
+        for f in self.filters:
+            subject, fr, to, cc, bcc = [True]*5
+            if f.subject:
+                subject = len(FuzzyList(thread.subjects).include(f.subject))
+            if f.fr:
+                fr = any([FuzzyList(m.fr).include(*f.fr) for m in thread.messages])
+            if f.to:
+                to = any([FuzzyList(m.to).include(f.to) for m in thread.messages])
+            if f.cc:
+                cc = any([FuzzyList(m.cc).include(*f.cc) for m in thread.messages])
+            if f.bcc:
+                bcc = any([FuzzyList(m.bcc).include(*f.bcc) for m in thread.messages])
+            if subject and fr and to and cc and bcc:
+                filters += [f.name]
+                actions += f.actions
+        return filters, actions
+
     def run(self):
-        print('self.filters =', self.filters)
         pp(dict(filters=self.filters))
         pp(dict(labels=self.labels))
         threads_req = self.threads_api.list(q=self.cfg.query, userId='me', maxResults=self.cfg.max_results)
@@ -342,28 +355,13 @@ class Sieve:
             print('len(threads) =', len(threads))
             for thread in threads:
                 thread = Thread(sieve=self, **self.threads_api.get(userId='me', id=thread['id'], format='metadata', metadataHeaders=METADATA_HEADERS).execute())
-                pp(dict(filters=self.filters))
-                for message in thread.messages:
-                    pp(dict(headers=message.headers, labels=message.labels))
-
-                for f in self.filters:
-                    result = False
-                    if f.fr:
-                        dbg(f_fr=f.fr)
-                        fr = any([FuzzyList(m.fr).include(*f.fr) for m in thread.messages])
-                        dbg(fr)
-                    if f.to:
-                        dbg(f_to=f.to)
-                        to = any([FuzzyList(m.to).include(f.to) for m in thread.messages])
-                        dbg(to)
-                    if f.cc:
-                        dbg(f_cc=f.cc)
-                        cc = any([FuzzyList(m.cc).include(*f.cc) for m in thread.messages])
-                        dbg(cc)
-                    if f.bcc:
-                        dbg(f_bcc=f.bcc)
-                        bcc = any([FuzzyList(m.bcc).include(*f.bcc) for m in thread.messages])
-                        dbg(bcc)
+                filters, actions = self.filter_thread(thread)
+                if filters:
+                    pp(dict(
+                        subject=thread.subject,
+                        filters=filters,
+                        actions=actions
+                    ))
 
                 print('*'*80)
 
