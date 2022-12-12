@@ -69,6 +69,43 @@ METADATA_HEADERS = [
     'mailing-list',
 ]
 
+LABELS = {
+    'CHAT': 'CHAT',
+    'SPAM': 'SPAM',
+    #'DRAFT': 'DRAFT',
+    'INBOX': 'INBOX',
+    'TRASH': 'TRASH',
+    'UNREAD': 'UNREAD',
+    'STARRED': 'STARRED',
+    'IMPORTANT': 'IMPORTANT',
+    'CATEGORY_FORUMS': 'CATEGORY_FORUMS',
+    'CATEGORY_SOCIAL': 'CATEGORY_SOCIAL',
+    'CATEGORY_UPDATES': 'CATEGORY_UPDATES',
+    'CATEGORY_FINANCE': 'CATEGORY_FINANCE',
+    'CATEGORY_PERSONAL': 'CATEGORY_PERSONAL',
+    'CATEGORY_SHOPPING': 'CATEGORY_SHOPPING',
+    'CATEGORY_PURCHASES': 'CATEGORY_PURCHASES',
+    'CATEGORY_PROMOTIONS': 'CATEGORY_PROMOTIONS',
+}
+
+ADDING = {
+    'spam': 'SPAM',
+    'star': 'STARRED',
+    'inbox': 'INBOX',
+    'trash': 'TRASH',
+    'unread': 'UNREAD',
+    'important': 'IMPORTANT',
+}
+
+REMOVING ={
+    'read': 'UNREAD',
+    'unspam': 'SPAM',
+    'unstar': 'STARRED',
+    'archive': 'INBOX',
+    'untrash': 'TRASH',
+    'unimportant': 'IMPORTANT',
+}
+
 DIR = os.path.abspath(os.path.dirname(__file__))
 CWD = os.path.abspath(os.getcwd())
 REL = os.path.relpath(DIR, CWD)
@@ -169,7 +206,7 @@ class Message:
     def labels(self):
         '''labels: plural'''
         return {
-            id: self.thread.sieve.labels[id]
+            self.thread.sieve.labels[id]: id
             for id
             in self.labelIds
         }
@@ -253,10 +290,9 @@ class Sieve:
     __repr__ = __repr__
 
     @property
-    @lru_cache()
     def labels(self):
         return {
-            label['id']: label['name']
+            label['name']: label['id']
             for label
             in self.labels_api.list(userId='me').execute()['labels']
         }
@@ -343,21 +379,59 @@ class Sieve:
                 actions += f.actions
         return actions
 
-    def run(self):
-        pp(dict(filters=self.filters, labels=self.labels))
+    def filter_gmail(self):
         threads_req = self.threads_api.list(q=self.cfg.query, userId='me', maxResults=self.cfg.max_results)
-        actions = {}
+        changes = []
         while threads_req:
             threads_res = threads_req.execute()
             threads = threads_res.get('threads', [])
             print('len(threads) =', len(threads))
             for thread in threads:
                 thread = Thread(sieve=self, **self.threads_api.get(userId='me', id=thread['id'], format='metadata', metadataHeaders=METADATA_HEADERS).execute())
-                for action in self.filter_thread(thread):
-                    actions[action] = actions.get(action, []) + [thread.id]
+                actions = self.filter_thread(thread)
+                if actions:
+                    changes += [(thread.id, actions)]
             ## keep searching until None
             threads_req = self.threads_api.list_next(threads_req, threads_res)
-        pp(actions)
+        return changes
+
+    def get_or_create_label_id(self, label):
+        if label in ADDING:
+            return ADDING[label], None
+        if label in REMOVING:
+            return None, REMOVING[label]
+        if label in self.labels:
+            return self.labels[label], None
+        try:
+            result = self.labels_api.create(userId='me', body={'name': label}).execute()
+            return result['id'], None
+        except HttpError as e:
+            if e.resp.status == 409:
+                dbg('label =', label)
+                pp(dict(labels=self.labels))
+                return self.labels[label], None
+            else:
+                print(f'Error creating label {label}')
+                raise e
+
+    def execute_actions(self, changes):
+        for thread_id, actions in changes:
+            dbg(thread_id)
+            dbg(actions)
+            body = Addict(addLabelIds=[], removeLabelIds=[])
+            for action in actions:
+                add, remove = self.get_or_create_label_id(action)
+                if add:
+                    body.addLabelIds.append(add)
+                if remove:
+                    body.removeLabelIds.append(remove)
+            pp(dict(thread_id=thread_id, body=body))
+            print(80*'-')
+
+    def run(self):
+        pp(self.labels)
+        changes = self.filter_gmail()
+        self.execute_actions(changes)
 
 def main(args):
     parser = ArgumentParser()
