@@ -416,8 +416,6 @@ class Sieve:
 
     def execute_actions(self, changes):
         for thread_id, actions in changes:
-            dbg(thread_id)
-            dbg(actions)
             body = Addict(addLabelIds=[], removeLabelIds=[])
             for action in actions:
                 add, remove = self.get_or_create_label_id(action)
