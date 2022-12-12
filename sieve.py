@@ -298,9 +298,9 @@ class Sieve:
         }
 
     def auth(self, creds_json):
+        creds = None
         creds_json = os.path.realpath(os.path.expanduser(creds_json))
         token_json = os.path.join(os.path.dirname(creds_json), '.token.json')
-        creds = None
         # The file token.json stores the user's access and refresh tokens, and is
         # created automatically when the authorization flow completes for the first
         # time.
@@ -395,34 +395,29 @@ class Sieve:
             threads_req = self.threads_api.list_next(threads_req, threads_res)
         return changes
 
-    def get_or_create_label_id(self, label):
+    def get_or_create_label_id(self, label, body):
         if label in ADDING:
-            return ADDING[label], None
-        if label in REMOVING:
-            return None, REMOVING[label]
-        if label in self.labels:
-            return self.labels[label], None
-        try:
-            result = self.labels_api.create(userId='me', body={'name': label}).execute()
-            return result['id'], None
-        except HttpError as e:
-            if e.resp.status == 409:
-                dbg('label =', label)
-                pp(dict(labels=self.labels))
-                return self.labels[label], None
-            else:
-                print(f'Error creating label {label}')
-                raise e
+            body.addLabelIds += [ADDING[label]]
+        elif label in REMOVING:
+            body.removeLabelIds += [REMOVING[label]]
+        elif label in self.labels:
+            body.addLabelIds += [self.labels[label]]
+        else:
+            try:
+                result = self.labels_api.create(userId='me', body={'name': label}).execute()
+                body.addLabelIds += [result['id']]
+            except HttpError as e:
+                print(f'Error creating label="{label}"')
+                if e.resp.status == 409:
+                    body.addLabelIds += [self.labels[label]]
+                else:
+                    raise e
 
     def execute_actions(self, changes):
         for thread_id, actions in changes:
             body = Addict(addLabelIds=[], removeLabelIds=[])
             for action in actions:
-                add, remove = self.get_or_create_label_id(action)
-                if add:
-                    body.addLabelIds.append(add)
-                if remove:
-                    body.removeLabelIds.append(remove)
+                self.get_or_create_label_id(action, body)
             pp(dict(thread_id=thread_id, body=body))
             print(80*'-')
 
