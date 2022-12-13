@@ -168,15 +168,22 @@ class Message:
     __repr__ = __repr__
 
     @property
+    @lru_cache()
     def subject(self):
         '''subject: singular'''
-        return self.headers['subject']
+        return self.headers.get('subject')
+
+    @property
+    @lru_cache()
+    def sender(self):
+        '''sender: plural'''
+        return format_emails(self.headers.get('sender'))
 
     @property
     @lru_cache()
     def fr(self):
         '''from: plural'''
-        return format_emails(self.headers['from'])
+        return format_emails(self.headers.get('from'))
 
     @property
     @lru_cache()
@@ -242,6 +249,11 @@ class Thread:
         return tuple(m.subject for m in self.messages)
 
     @property
+    def senders(self):
+        '''senders: plural'''
+        return tuple(m.sender for m in self.messages)
+
+    @property
     def frs(self):
         '''frs: plural'''
         return tuple(m.fr for m in self.messages)
@@ -262,11 +274,12 @@ class Thread:
         return tuple(m.bcc for m in self.messages)
 
 class Filter(Addict):
-    def __init__(self, name=None, subject=None, fr=None, to=None, cc=None, bcc=None, precedence=None, actions=None, **headers):
+    def __init__(self, name=None, subject=None, sender=None, fr=None, to=None, cc=None, bcc=None, precedence=None, actions=None, **headers):
         dict.__init__(
             self,
             name=name,
             subject=subject,
+            sender=sender,
             fr=tuplify(fr),
             to=to,
             cc=tuplify(cc),
@@ -328,6 +341,12 @@ class Sieve:
             in yaml.safe_load(open(sieve_yml)).items()
         })
         self.filters = []
+        if cfg.spammers.sender:
+            self.filters += [
+                Filter(name=f'spammer-{sender}', sender=sender, actions=['archive', f'_/{sender}'])
+                for sender
+                in cfg.spammers.sender
+            ]
         if cfg.spammers.fr:
             self.filters += [
                 Filter(name=f'spammer-{fr}', fr=fr, actions=['archive', f'_/{fr}'])
@@ -345,6 +364,7 @@ class Sieve:
                     Filter(
                         name=name,
                         subject=body.get('subject'),
+                        sender=body.get('sender'),
                         fr=tuplify(body.get('fr')),
                         to=body.get('to'),
                         cc=tuplify(body.get('cc')),
@@ -364,9 +384,11 @@ class Sieve:
     def filter_thread(self, thread):
         actions = []
         for f in self.filters:
-            subject, fr, to, cc, bcc = [True]*5
+            subject, sender, fr, to, cc, bcc = [True]*6
             if f.subject:
                 subject = len(FuzzyList(thread.subjects).include(f.subject))
+            if f.sender:
+                sender = len(FuzzyList(thread.senders).include(f.sender))
             if f.fr:
                 fr = any([FuzzyList(m.fr).include(*f.fr) for m in thread.messages])
             if f.to:
@@ -375,8 +397,9 @@ class Sieve:
                 cc = any([FuzzyList(m.cc).include(*f.cc) for m in thread.messages])
             if f.bcc:
                 bcc = any([FuzzyList(m.bcc).include(*f.bcc) for m in thread.messages])
-            if subject and fr and to and cc and bcc:
+            if subject and sender and fr and to and cc and bcc:
                 actions += f.actions
+                break #FIXME: should be able to apply multiple filters
         return actions
 
     def filter_gmail(self):
@@ -418,7 +441,12 @@ class Sieve:
             body = Addict(addLabelIds=[], removeLabelIds=[])
             for action in actions:
                 self.get_or_create_label_id(action, body)
-            pp(dict(thread_id=thread_id, body=body))
+            try:
+                self.threads_api.modify(userId='me', id=thread_id, body=body).execute()
+            except HttpError as e:
+                print(f'Error executing actions={actions} for thread_id={thread_id}')
+                raise e
+            print(f'thread={thread_id} processes')
             print(80*'-')
 
     def run(self):
