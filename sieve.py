@@ -88,7 +88,7 @@ LABELS = {
     'CATEGORY_PROMOTIONS': 'CATEGORY_PROMOTIONS',
 }
 
-ADDING = {
+ADD_ACTION_TO_LABEL = {
     'spam': 'SPAM',
     'star': 'STARRED',
     'inbox': 'INBOX',
@@ -97,13 +97,29 @@ ADDING = {
     'important': 'IMPORTANT',
 }
 
-REMOVING ={
+REMOVE_ACTION_TO_LABEL = {
     'read': 'UNREAD',
     'unspam': 'SPAM',
     'unstar': 'STARRED',
     'archive': 'INBOX',
     'untrash': 'TRASH',
     'unimportant': 'IMPORTANT',
+}
+
+ACTION_TO_LABEL = {
+    'spam': ('SPAM', True),
+    'star': ('STARRED', True),
+    'inbox': ('INBOX', True),
+    'trash': ('TRASH', True),
+    'unread': ('UNREAD', True),
+    'important': ('IMPORTANT', True),
+
+    'read': ('UNREAD', False),
+    'unspam': ('SPAM', False),
+    'unstar': ('STARRED', False),
+    'archive': ('INBOX', False),
+    'untrash': ('TRASH', False),
+    'unimportant': ('IMPORTANT', False),
 }
 
 DIR = os.path.abspath(os.path.dirname(__file__))
@@ -239,6 +255,16 @@ class Thread:
     __repr__ = __repr__
 
     @property
+    def labels(self):
+        '''labels: plural'''
+        return tuple(tuple(m.labelIds) for m in self.messages)
+
+    @property
+    def are_labels_uniform(self):
+        '''are_labels_uniform: singular'''
+        return len(set(self.labels)) == 1
+
+    @property
     def subject(self):
         '''subject: singular'''
         return self.messages[0].subject
@@ -273,8 +299,14 @@ class Thread:
         '''bccs: plural'''
         return tuple(m.bcc for m in self.messages)
 
+    def labels_match(self, labels):
+        '''labels_match: singular'''
+        if self.are_labels_uniform:
+            return self.labels[0] == labels
+        return False
+
 class Filter(Addict):
-    def __init__(self, name=None, subject=None, sender=None, fr=None, to=None, cc=None, bcc=None, precedence=None, actions=None, **headers):
+    def __init__(self, sieve=None, name=None, subject=None, sender=None, fr=None, to=None, cc=None, bcc=None, precedence=None, addLabelIds=None, removeLabelIds=None, **headers):
         dict.__init__(
             self,
             name=name,
@@ -285,9 +317,25 @@ class Filter(Addict):
             cc=tuplify(cc),
             bcc=tuplify(bcc),
             precedence=precedence,
-            actions=actions,
+            addLabelIds=[] if addLabelIds is None else addLabelIds,
+            removeLabelIds=[] if removeLabelIds is None else removeLabelIds,
             **headers,
         )
+
+class Change:
+    def __init__(self, sieve, thread, filters):
+        self.sieve = sieve
+        self.thread = thread
+        self.filters = filters
+
+    __repr__ = __repr__
+
+    def execute(self):
+        body = Addict(addLabelIds=[], removeLabelIds=[])
+        for f in self.filters:
+            for labelId in self.filter.addLabelIds:
+                if labelId not in self.thread.labels:
+                    body.addLabelIds += labelId
 
 class Sieve:
     def __init__(self, creds_json, sieve_yml, **kwargs):
@@ -331,6 +379,27 @@ class Sieve:
                 token.write(pf(creds.to_json()))
         self.creds = creds
 
+    def actions_to_label_ids(self, actions):
+        body = Addict(removeLabelIds=[], addLabelIds=[])
+        for action in actions:
+            if action in REMOVE_ACTION_TO_LABEL:
+                body.removeLabelIds += [REMOVE_ACTION_TO_LABEL[action]]
+            elif action in ADD_ACTION_TO_LABEL:
+                body.addLabelIds += [ADD_ACTION_TO_LABEL[action]]
+            elif action in self.labels:
+                body.addLabelIds += [self.labels[action]]
+            else:
+                try:
+                    result = self.labels_api.create(userId='me', body={'name': action}).execute()
+                    body.addLabelIds += [result['id']]
+                except HttpError as e:
+                    print(f'Error creating label="{action}"')
+                    if e.resp.status == 409:
+                        body.addLabelIds += [self.labels[action]]
+                    else:
+                        raise e
+        return body
+
     def load(self, sieve_yml):
         sieve_yml = os.path.expanduser(sieve_yml)
         if not os.path.exists(sieve_yml):
@@ -343,36 +412,58 @@ class Sieve:
         self.filters = []
         if cfg.spammers.sender:
             self.filters += [
-                Filter(name=f'spammer-{sender}', sender=sender, actions=['archive', f'_/{sender}'])
+                Filter(
+                    name=f'spammer-{sender}',
+                    sender=sender,
+                    **self.actions_to_label_ids([
+                        'archive',
+                        f'_/{sender}',
+                    ])
+                )
                 for sender
                 in cfg.spammers.sender
             ]
         if cfg.spammers.fr:
             self.filters += [
-                Filter(name=f'spammer-{fr}', fr=fr, actions=['archive', f'_/{fr}'])
+                Filter(
+                    name=f'spammer-{fr}',
+                    fr=fr,
+                    **self.actions_to_label_ids([
+                        'archive',
+                        f'_/{fr}',
+                    ])
+                )
                 for fr
                 in cfg.spammers.fr
             ]
         if cfg.spammers.to:
             self.filters += [
-                Filter(name=f'spammer-{to}', to=to, actions=['archive', f'_/{to}'])
+                Filter(
+                    name=f'spammer-{to}',
+                    to=to,
+                    **self.actions_to_label_ids([
+                        'archive',
+                        f'_/{to}',
+                    ])
+                )
                 for to
                 in cfg.spammers.to
             ]
         if cfg.filters:
             self.filters += [
-                    Filter(
-                        name=name,
-                        subject=body.get('subject'),
-                        sender=body.get('sender'),
-                        fr=tuplify(body.get('fr')),
-                        to=body.get('to'),
-                        cc=tuplify(body.get('cc')),
-                        bcc=tuplify(body.get('bcc')),
-                        precedence=body.get('precedence'),
-                        actions=body.get('actions'),
-                        headers={},
-                    )
+                Filter(
+                    sieve=self,
+                    name=name,
+                    subject=body.get('subject'),
+                    sender=body.get('sender'),
+                    fr=tuplify(body.get('fr')),
+                    to=body.get('to'),
+                    cc=tuplify(body.get('cc')),
+                    bcc=tuplify(body.get('bcc')),
+                    precedence=body.get('precedence'),
+                    **self.actions_to_label_ids(body.get('actions')),
+                    headers={},
+                )
                 for name, body
                 in [head_body(f) for f in cfg.filters]
             ]
@@ -382,7 +473,7 @@ class Sieve:
         pp(self.filters)
 
     def filter_thread(self, thread):
-        actions = []
+        filters = []
         for f in self.filters:
             subject, sender, fr, to, cc, bcc = [True]*6
             if f.subject:
@@ -398,9 +489,11 @@ class Sieve:
             if f.bcc:
                 bcc = any([FuzzyList(m.bcc).include(*f.bcc) for m in thread.messages])
             if subject and sender and fr and to and cc and bcc:
-                actions += f.actions
+                filters += [f]
                 break #FIXME: should be able to apply multiple filters
-        return actions
+        if filters:
+            return [Change(self, thread, filters)]
+        return []
 
     def filter_gmail(self):
         threads_req = self.threads_api.list(q=self.cfg.query, userId='me', maxResults=self.cfg.max_results)
@@ -411,43 +504,21 @@ class Sieve:
             print('len(threads) =', len(threads))
             for thread in threads:
                 thread = Thread(sieve=self, **self.threads_api.get(userId='me', id=thread['id'], format='metadata', metadataHeaders=METADATA_HEADERS).execute())
-                actions = self.filter_thread(thread)
-                if actions:
-                    changes += [(thread.id, actions)]
+                changes += self.filter_thread(thread)
             ## keep searching until None
             threads_req = self.threads_api.list_next(threads_req, threads_res)
         return changes
 
-    def get_or_create_label_id(self, label, body):
-        if label in ADDING:
-            body.addLabelIds += [ADDING[label]]
-        elif label in REMOVING:
-            body.removeLabelIds += [REMOVING[label]]
-        elif label in self.labels:
-            body.addLabelIds += [self.labels[label]]
-        else:
-            try:
-                result = self.labels_api.create(userId='me', body={'name': label}).execute()
-                body.addLabelIds += [result['id']]
-            except HttpError as e:
-                print(f'Error creating label="{label}"')
-                if e.resp.status == 409:
-                    body.addLabelIds += [self.labels[label]]
-                else:
-                    raise e
-
     def execute_actions(self, changes):
-        for thread_id, actions in changes:
-            body = Addict(addLabelIds=[], removeLabelIds=[])
-            for action in actions:
-                self.get_or_create_label_id(action, body)
-            try:
-                self.threads_api.modify(userId='me', id=thread_id, body=body).execute()
-            except HttpError as e:
-                print(f'Error executing actions={actions} for thread_id={thread_id}')
-                raise e
-            print(f'thread={thread_id} processes')
-            print(80*'-')
+        for change in changes:
+            change.execute()
+            # try:
+            #     self.threads_api.modify(userId='me', id=thread_id, body=body).execute()
+            # except HttpError as e:
+            #     print(f'Error executing actions={actions} for thread_id={thread_id}')
+            #     raise e
+            # print(f'thread={thread_id} processes')
+            # print(80*'-')
 
     def run(self):
         pp(self.labels)
