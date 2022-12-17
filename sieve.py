@@ -115,22 +115,6 @@ REMOVE_ACTION_TO_LABEL = {
     'unimportant': 'IMPORTANT',
 }
 
-ACTION_TO_LABEL = {
-    'spam': ('SPAM', True),
-    'star': ('STARRED', True),
-    'inbox': ('INBOX', True),
-    'trash': ('TRASH', True),
-    'unread': ('UNREAD', True),
-    'important': ('IMPORTANT', True),
-
-    'read': ('UNREAD', False),
-    'unspam': ('SPAM', False),
-    'unstar': ('STARRED', False),
-    'archive': ('INBOX', False),
-    'untrash': ('TRASH', False),
-    'unimportant': ('IMPORTANT', False),
-}
-
 DIR = os.path.abspath(os.path.dirname(__file__))
 CWD = os.path.abspath(os.getcwd())
 REL = os.path.relpath(DIR, CWD)
