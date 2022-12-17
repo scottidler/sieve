@@ -84,14 +84,6 @@ LABELS = {
     'UNREAD': 'UNREAD',
     'STARRED': 'STARRED',
     'IMPORTANT': 'IMPORTANT',
-    # 'CATEGORY_FORUMS': 'CATEGORY_FORUMS',
-    # 'CATEGORY_SOCIAL': 'CATEGORY_SOCIAL',
-    # 'CATEGORY_UPDATES': 'CATEGORY_UPDATES',
-    # 'CATEGORY_FINANCE': 'CATEGORY_FINANCE',
-    # 'CATEGORY_PERSONAL': 'CATEGORY_PERSONAL',
-    # 'CATEGORY_SHOPPING': 'CATEGORY_SHOPPING',
-    # 'CATEGORY_PURCHASES': 'CATEGORY_PURCHASES',
-    # 'CATEGORY_PROMOTIONS': 'CATEGORY_PROMOTIONS',
 }
 
 CATEGORIES = {
@@ -161,11 +153,6 @@ class LabelIntersectionError(Exception):
 class SieveYmlNotFoundError(Exception):
     def __init__(self, sieve_yml):
         msg = f'error: sieve_yml={sieve_yml} not found'
-        super().__init__(msg)
-
-class InvalidLabelIdError(Exception):
-    def __init__(self, labelIds):
-        msg = f'error: labelId={labelIds} is not a valid labelId'
         super().__init__(msg)
 
 def pf(obj):
@@ -417,10 +404,6 @@ class Change:
         logger.info(f'thread.id={self.thread.id}: "{self.thread.subject}"')
         logger.debug(f'thread.labels={self.thread.labels}')
         for f in self.filters:
-            if any([id.startswith('_/') for id in f.addLabelIds]):
-                raise InvalidLabelIdError(f.addLabelIds)
-            if any([id.startswith('_/') for id in f.removeLabelIds]):
-                raise InvalidLabelIdError(f.removeLabelIds)
             body.addLabelIds += f.addLabelIds
             body.removeLabelIds += f.removeLabelIds
             if not is_valid(body):
