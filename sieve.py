@@ -502,6 +502,7 @@ class Sieve:
         return body
 
     def load(self, sieve_yml):
+        self.default = None
         sieve_yml = os.path.expanduser(sieve_yml)
         if not os.path.exists(sieve_yml):
             raise SieveYmlNotFoundError(sieve_yml)
@@ -551,9 +552,14 @@ class Sieve:
                 in cfg.spammers.to
             ]
         if cfg.filters:
+            default = cfg.filters.pop('default', None)
+            if default:
+                self.default = Filter(
+                    name='default',
+                    **self.actions_to_label_ids(default.get('actions'))
+                )
             self.filters += [
                 Filter(
-                    sieve=self,
                     name=name,
                     subject=body.get('subject'),
                     sender=body.get('sender'),
@@ -566,12 +572,13 @@ class Sieve:
                     headers={},
                 )
                 for name, body
-                in [head_body(f) for f in cfg.filters]
+                in cfg.filters.items()
             ]
         self.cfg = cfg
 
     def show_filters(self):
-        pp([f.to_json() for f in self.filters])
+        filters = self.filters + [self.default] if self.default else []
+        pp([f.to_json() for f in filters])
 
     def filter_thread(self, thread):
         filters = []
@@ -594,6 +601,8 @@ class Sieve:
                 break #FIXME: should be able to apply multiple filters
         if filters:
             return [Change(self, thread, filters)]
+        elif self.default:
+            return [Change(self, thread, [self.default])]
         return []
 
     def filter_gmail(self):
