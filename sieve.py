@@ -12,12 +12,17 @@
 ## https://console.cloud.google.com/home/dashboard?project=gmailfilter-370504
 ## https://console.cloud.google.com/apis/credentials?project=sieve-370505
 
+## https://googleapis.github.io/google-api-python-client/docs/dyn/gmail_v1.users.html
+
 import os
 import re
 import sys
 sys.dont_write_bytecode = True
 
 import json
+import time
+import signal
+import asyncio
 import logging
 
 from google.auth.transport.requests import Request
@@ -26,14 +31,16 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from datetime import datetime
 from addict import Addict
 from ruamel import yaml
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from itertools import chain
 from dataclasses import dataclass
 from typing import List, Dict
-from functools import lru_cache
+from functools import lru_cache, wraps, partial
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 
 from leatherman.dictionary import head_body
 from leatherman.fuzzy import fuzzy, FuzzyList
@@ -129,6 +136,8 @@ if os.path.islink(__file__):
 
 NAME, EXT = os.path.splitext(REAL_NAME)
 
+loop = asyncio.new_event_loop()
+
 class LabelIntersectionError(Exception):
     def __init__(self, addLabelIds, removeLabelIds):
         msg = f'error: addLabelIds={addLabelIds} and removeLabelIds={removeLabelIds} intersect'
@@ -138,6 +147,18 @@ class SieveYmlNotFoundError(Exception):
     def __init__(self, sieve_yml):
         msg = f'error: sieve_yml={sieve_yml} not found'
         super().__init__(msg)
+
+def asyncify(func):
+    '''
+    turns a sync function into an async function, using threads
+    '''
+    pool = ThreadPoolExecutor(1)
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        future = pool.submit(func, *args, **kwargs)
+        return asyncio.wrap_future(future)
+    return wrapper
 
 def pf(obj):
     if isinstance(obj, str):
@@ -264,8 +285,8 @@ class Message:
     def headers(self):
         '''headers: plural'''
         return {
-            h['name'].lower():h['value']
-            for h
+            header['name'].lower():header['value']
+            for header
             in self.payload.headers
         }
 
@@ -383,6 +404,7 @@ class Change:
 
     __repr__ = __repr__
 
+    @asyncify
     def execute(self):
         body = Addict(addLabelIds=[], removeLabelIds=[])
         logger.info(f'thread.id={self.thread.id}: "{self.thread.subject}"')
@@ -392,11 +414,7 @@ class Change:
             body.removeLabelIds += f.removeLabelIds
             if not is_valid(body):
                 raise LabelIntersectionError(body.addLabelIds, body.removeLabelIds)
-        logger.debug(f'after collecting filters:')
-        logger.debug(f'body={pf(body)}')
         body2 = self.sieve.body_ids_to_labels(body)
-        logger.debug(f'body2={pf(body2)}')
-
         if self.thread.is_uptodate(body):
             logger.debug(f'thread is up to date, already has changes {pf(body2)}')
         else:
@@ -405,11 +423,13 @@ class Change:
                 self.sieve.threads_api.modify(userId='me', id=self.thread.id, body=body).execute()
                 logger.info('completed successfullly')
             except HttpError as e:
-                logger.info(f'Error executing actions={body} for thread_id={thread_id}')
+                logger.info(f'Error executing actions={body} for thread.id={self.thread.id}: "{self.thread.subject}"')
                 raise e
 
 class Sieve:
     def __init__(self, creds_json, sieve_yml, **kwargs):
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
         self.auth(creds_json)
         self.gmail = build('gmail', 'v1', credentials=self.creds)
         self.profile = self.gmail.users().getProfile(userId='me').execute()
@@ -418,6 +438,7 @@ class Sieve:
         self.directory = build('admin', 'directory_v1', credentials=self.creds)
         self.groups_api = self.directory.groups()
         self.load(sieve_yml)
+
 
     __repr__ = __repr__
 
@@ -558,15 +579,16 @@ class Sieve:
                 for name, body
                 in cfg.filters.items()
             ]
+
         self.cfg = cfg
 
     def show_filters(self):
         filters = self.filters + [self.default] if self.default else []
         pp([f.to_json() for f in filters])
 
-    def filter_thread(self, thread):
-        filters = []
-        for f in self.filters:
+    async def filter_thread(self, thread, filters):
+        applied_filters = []
+        for f in filters:
             subject, sender, fr, to, cc, bcc = [True]*6
             if f.subject:
                 subject = len(FuzzyList(thread.subjects).include(f.subject))
@@ -581,39 +603,54 @@ class Sieve:
             if f.bcc:
                 bcc = any([FuzzyList(m.bcc).include(*f.bcc) for m in thread.messages])
             if subject and sender and fr and to and cc and bcc:
-                filters += [f]
+                applied_filters += [f]
                 break #FIXME: should be able to apply multiple filters
-        if filters:
-            return [Change(self, thread, filters)]
+        if applied_filters:
+            return [Change(self, thread, applied_filters)]
         elif self.default:
             return [Change(self, thread, [self.default])]
         return []
 
-    def filter_gmail(self):
-        threads_req = self.threads_api.list(q=self.cfg.query, userId='me', maxResults=self.cfg.max_results)
-        changes = []
+    @asyncify
+    def get_threads_ids(self, query=None, max_results=None):
+        threads_req = self.threads_api.list(userId='me', q=query, maxResults=max_results)
+        thread_ids = []
         while threads_req:
             threads_res = threads_req.execute()
             threads = threads_res.get('threads', [])
-            logger.info(f'len(threads)={len(threads)}')
-            for thread in threads:
-                thread = Thread(sieve=self, **self.threads_api.get(userId='me', id=thread['id'], format='metadata', metadataHeaders=METADATA_HEADERS).execute())
-                changes += self.filter_thread(thread)
-            ## keep searching until None
+            logger.debug(f'len(threads)={len(threads)}')
+            thread_ids += [thread['id'] for thread in threads]
             threads_req = self.threads_api.list_next(threads_req, threads_res)
+        return thread_ids
+
+    @asyncify
+    def hydrate_thread(self, thread_id):
+        return Thread(sieve=self, **self.threads_api.get(userId='me', id=thread_id, format='metadata', metadataHeaders=METADATA_HEADERS).execute())
+
+    async def filter_gmail(self, thread_ids, filters):
+        changes = []
+        for thread_id in thread_ids:
+            thread = await self.hydrate_thread(thread_id)
+            changes += await self.filter_thread(thread, filters)
         return changes
 
-    def execute_changes(self, changes):
+    async def execute_changes(self, changes):
         for change in changes:
-            change.execute()
+            await change.execute()
             logger.info('*'*80)
 
-    def run(self):
-        ppl(self.labels_to_ids)
-        changes = self.filter_gmail()
-        self.execute_changes(changes)
+    async def _run(self):
+        logger.debug(f'query={self.cfg.query} max_results={self.cfg.max_results}')
+        thread_ids = await self.get_threads_ids(query=self.cfg.query, max_results=self.cfg.max_results)
+        logger.info(f'len(thread_ids)={len(thread_ids)}')
+        changes = await self.filter_gmail(thread_ids, self.filters)
+        logger.info(f'len(changes)={len(changes)}')
+        await self.execute_changes(changes)
 
-def main(args):
+    async def run(self):
+        return await self._run()
+
+async def main(args):
     parser = ArgumentParser()
     parser.add_argument(
         '--creds-json',
@@ -632,8 +669,21 @@ def main(args):
     if ns.show_filters:
         sieve.show_filters()
     else:
-        sieve.run()
+        await sieve.run()
 
-if __name__ == '__main__':
-    main(sys.argv[1:])
+async def _signal_handler():
+    try:
+        tasks = asyncio.all_tasks(loop)
+        for task in tasks:
+            task.cancel()
+    except RuntimeError as err:
+        print('SIGINT or SIGTSTP raised')
+        print("cleaning and exiting")
+        sys.exit(1)
 
+def signal_handler(*args):
+    loop.create_task(_signal_handler())
+
+signal.signal(signal.SIGINT, signal_handler)
+
+loop.run_until_complete(main(sys.argv[1:]))
