@@ -426,10 +426,18 @@ class Change:
                 logger.info(f'Error executing actions={body} for thread.id={self.thread.id}: "{self.thread.subject}"')
                 raise e
 
+
+class Wave:
+    def __init__(self, name, sieve, query, filters):
+        self.name = name
+        self.sieve = sieve
+        self.query = query
+        self.filters = filters
+
+    __repr__ = __repr__
+
 class Sieve:
     def __init__(self, creds_json, sieve_yml, **kwargs):
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
         self.auth(creds_json)
         self.gmail = build('gmail', 'v1', credentials=self.creds)
         self.profile = self.gmail.users().getProfile(userId='me').execute()
@@ -437,8 +445,8 @@ class Sieve:
         self.threads_api = self.gmail.users().threads()
         self.directory = build('admin', 'directory_v1', credentials=self.creds)
         self.groups_api = self.directory.groups()
-        self.load(sieve_yml)
-
+        #self.load(sieve_yml)
+        self.load_yml('sieve2.yml')
 
     __repr__ = __repr__
 
@@ -505,6 +513,104 @@ class Sieve:
                     else:
                         raise e
         return body
+
+#        self.filters = []
+#        if cfg.spammers.sender:
+#            self.filters += [
+#                Filter(
+#                    name=f'spammer-{sender}',
+#                    sender=sender,
+#                    **self.actions_to_label_ids([
+#                        'archive',
+#                        f'_/{sender}',
+#                    ])
+#                )
+#                for sender
+#                in cfg.spammers.sender
+#            ]
+
+    def load_spammer(self, name, **headers):
+        key, value = head_body(headers)
+        return [
+            Filter(
+                name=f'spammer-{key}',
+                **{key: item},
+                **self.actions_to_label_ids([
+                    'archive',
+                    f'_/{item}',
+                ])
+            )
+            for item
+            in value
+        ]
+
+#        if cfg.filters:
+#            default = cfg.filters.pop('default', None)
+#            if default:
+#                self.default = Filter(
+#                    name='default',
+#                    **self.actions_to_label_ids(default.get('actions'))
+#                )
+#            self.filters += [
+#                Filter(
+#                    name=name,
+#                    subject=body.get('subject'),
+#                    sender=body.get('sender'),
+#                    fr=tuplify(body.get('fr')),
+#                    to=body.get('to'),
+#                    cc=tuplify(body.get('cc')),
+#                    bcc=tuplify(body.get('bcc')),
+#                    precedence=body.get('precedence'),
+#                    **self.actions_to_label_ids(body.get('actions')),
+#                    headers={},
+#                )
+#                for name, body
+#                in cfg.filters.items()
+#            ]
+
+    def load_filter(self, name, actions=None, **headers):
+        assert actions != None, 'actions cannot be None'
+        return [
+            Filter(
+                name,
+                **headers,
+                **self.actions_to_label_ids(actions)
+            )
+        ]
+
+    def load_wave(self, name, query=None, spammers=None, filters=None):
+        assert spammers != None or filters != None
+        filters_ = []
+        if spammers:
+            filters_ += [
+                self.load_spammer(name, **body)
+                for name, body
+                in spammers.items()
+            ]
+        if filters:
+            filters_ += [
+                self.load_filter(name, **body)
+                for name, body
+                in filters.items()
+            ]
+        return Wave(name, sieve, query, filters_)
+
+    def load_yml(self, sieve_yml='sieve2.yml'):
+        sieve_yml = os.path.expanduser(sieve_yml)
+        if not os.path.exists(sieve_yml):
+            raise SieveYmlNotFoundError(sieve_yml)
+        cfg = Addict({
+            key.replace('-', '_'): value
+            for key, value
+            in yaml.safe_load(open(sieve_yml)).items()
+        })
+        self.waves = [
+            self.load_wave(name, **body)
+            for name, body
+            in cfg.waves.items()
+        ]
+        ppl(self.waves)
+        sys.exit(1)
 
     def load(self, sieve_yml):
         self.default = None
