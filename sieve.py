@@ -434,6 +434,13 @@ class Wave:
         self.query = query
         self.filters = filters
 
+    def to_json(self):
+        return  dict(
+            name=self.name,
+            query=self.query,
+            filters=[f.to_json() for f in self.filters],
+        )
+
     __repr__ = __repr__
 
 class Sieve:
@@ -529,19 +536,18 @@ class Sieve:
 #                in cfg.spammers.sender
 #            ]
 
-    def load_spammer(self, name, **headers):
-        key, value = head_body(headers)
+    def load_spammer(self, label, *items):
         return [
             Filter(
-                name=f'spammer-{key}',
-                **{key: item},
+                name=f'spammer-{label}',
+                **{label: item},
                 **self.actions_to_label_ids([
                     'archive',
                     f'_/{item}',
                 ])
             )
             for item
-            in value
+            in items
         ]
 
 #        if cfg.filters:
@@ -570,30 +576,28 @@ class Sieve:
 
     def load_filter(self, name, actions=None, **headers):
         assert actions != None, 'actions cannot be None'
-        return [
-            Filter(
-                name,
-                **headers,
-                **self.actions_to_label_ids(actions)
-            )
-        ]
+        return Filter(
+            name,
+            **headers,
+            **self.actions_to_label_ids(actions)
+        )
 
     def load_wave(self, name, query=None, spammers=None, filters=None):
         assert spammers != None or filters != None
         filters_ = []
         if spammers:
-            filters_ += [
-                self.load_spammer(name, **body)
+            filters_ += list(chain(*[
+                self.load_spammer(name, *body)
                 for name, body
                 in spammers.items()
-            ]
+            ]))
         if filters:
             filters_ += [
                 self.load_filter(name, **body)
                 for name, body
                 in filters.items()
             ]
-        return Wave(name, sieve, query, filters_)
+        return Wave(name, self, query, filters_)
 
     def load_yml(self, sieve_yml='sieve2.yml'):
         sieve_yml = os.path.expanduser(sieve_yml)
@@ -609,7 +613,7 @@ class Sieve:
             for name, body
             in cfg.waves.items()
         ]
-        ppl(self.waves)
+        ppl([w.to_json() for w in self.waves])
         sys.exit(1)
 
     def load(self, sieve_yml):
