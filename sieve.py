@@ -492,13 +492,35 @@ class Change:
         return results
 
 class Spec:
-    def __init__(self, name, sieve, query, filters, max_results=500):
-        self.name = name or 'unnamed'
+    def __init__(self, sieve, name=None, query=None, spammers=None, filters=None, max_results=500):
         self.sieve = sieve
+        self.name = name or 'unnamed'
         self.query = query
-        self.filters = filters
         self.max_results = max_results
         self.default = None
+        self.filters = list(chain(*[
+            [
+                Filter(
+                    name=f'spammer-{label}',
+                    **{label: item},
+                    actions=[
+                        'archive',
+                        f'_/{item}',
+                    ])
+                for item
+                in items
+            ]
+            for label, items
+            in (spammers or {}).items()
+        ]))
+        self.filters += [
+            Filter(
+                name,
+                **body,
+            )
+            for name, body
+            in (filters or {}).items()
+        ]
 
     def to_json(self):
         return  dict(
@@ -582,7 +604,7 @@ class Spec:
         await self.execute_changes(changes)
 
 class Sieve:
-    def __init__(self, creds_json, sieve_yml, **kwargs):
+    def __init__(self, creds_json, docs):
         creds = auth(creds_json)
         self.gmail = build('gmail', 'v1', credentials=creds)
         self.profile = self.gmail.users().getProfile(userId='me').execute()
@@ -591,7 +613,7 @@ class Sieve:
         self.messages_api = self.gmail.users().messages()
         self.directory = build('admin', 'directory_v1', credentials=creds)
         self.groups_api = self.directory.groups()
-        self.load_yml(sieve_yml)
+        self.specs = [Spec(self, **spec) for spec in docs]
 
     __repr__ = __repr__
 
@@ -644,58 +666,19 @@ class Sieve:
                         raise e
         return Labels(add, remove)
 
-    def load_spammer(self, label, *items):
-        return [
-            Filter(
-                name=f'spammer-{label}',
-                **{label: item},
-                actions=[
-                    'archive',
-                    f'_/{item}',
-                ])
-            for item
-            in items
-        ]
-
-    def load_filter(self, name, actions=None, **headers):
-        assert actions != None, 'actions cannot be None'
-        return Filter(
-            name,
-            **headers,
-            actions=actions or []
-        )
-
-    def load_spec(self, name, query=None, spammers=None, filters=None):
-        assert spammers != None or filters != None
-        filters_ = []
-        if spammers:
-            filters_ += list(chain(*[
-                self.load_spammer(name, *body)
-                for name, body
-                in spammers.items()
-            ]))
-        if filters:
-            filters_ += [
-                self.load_filter(name, **body)
-                for name, body
-                in filters.items()
-            ]
-        return Spec(name, self, query, filters_)
-
-    def load_yml(self, sieve_yml):
-        sieve_yml = os.path.expanduser(sieve_yml)
-        if not os.path.exists(sieve_yml):
-            raise SieveYmlNotFoundError(sieve_yml)
-        docs = yaml.safe_load_all(open(sieve_yml))
-        self.specs = [self.load_spec(**doc) for doc in docs]
-
     def show_filters(self):
         pp([w.to_json() for w in self.specs])
-
 
     async def run(self):
         for spec in self.specs:
             await spec.run()
+
+def load_yml(sieve_yml):
+    sieve_yml = os.path.expanduser(sieve_yml)
+    if not os.path.exists(sieve_yml):
+        raise SieveYmlNotFoundError(sieve_yml)
+    docs = yaml.safe_load_all(open(sieve_yml))
+    return [Addict(doc) for doc in docs]
 
 async def main(args):
     parser = ArgumentParser()
@@ -712,7 +695,8 @@ async def main(args):
         action='store_true',
         help='toggle showing the filters')
     ns = parser.parse_args(args)
-    sieve = Sieve(**ns.__dict__)
+    docs = load_yml(ns.sieve_yml)
+    sieve = Sieve(ns.creds_json, docs)
     if ns.show_filters:
         sieve.show_filters()
     else:
