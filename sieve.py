@@ -20,7 +20,6 @@ import sys
 sys.dont_write_bytecode = True
 
 import json
-import time
 import signal
 import asyncio
 import logging
@@ -31,19 +30,15 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from datetime import datetime
 from addict import Addict
 from ruamel import yaml
-from argparse import ArgumentParser, RawDescriptionHelpFormatter
+from argparse import ArgumentParser
 from itertools import chain
-from dataclasses import dataclass
-from typing import List, Dict
-from functools import lru_cache, wraps, partial
-from collections import OrderedDict
+from functools import lru_cache, wraps
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
-from leatherman.dictionary import head_body
-from leatherman.fuzzy import fuzzy, FuzzyList
+from leatherman.fuzzy import FuzzyList
 from leatherman.repr import __repr__
 from leatherman.dbg import dbg
 
@@ -148,6 +143,30 @@ class SieveYmlNotFoundError(Exception):
         msg = f'error: sieve_yml={sieve_yml} not found'
         super().__init__(msg)
 
+def auth(creds_json):
+    creds = None
+    creds_json = os.path.realpath(os.path.expanduser(creds_json))
+    token_json = os.path.join(os.path.dirname(creds_json), '.token.json')
+    # The file token.json stores the user's access and refresh tokens, and is
+    # created automatically when the authorization flow completes for the first
+    # time.
+    if os.path.exists(token_json):
+        creds = Credentials.from_authorized_user_file(token_json, SCOPES)
+    # If there are no (valid) credentials available, let the user log in.
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(creds_json, SCOPES)
+            creds = flow.run_local_server(port=0)
+        # Save the credentials for the next run
+        with open(token_json, 'w') as token:
+            token.write(pf(creds.to_json()))
+    return creds
+
+def is_sequence(obj):
+    return isinstance(obj, (set, list, tuple))
+
 def asyncify(func):
     '''
     turns a sync function into an async function, using threads
@@ -190,9 +209,6 @@ def format_emails(s, regex=re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z
         return tuple(regex.findall(s))
     return ()
 
-def is_valid(obj):
-    return len(set(obj.addLabelIds) & set(obj.removeLabelIds)) == 0
-
 def difference(minuend, subtrahend):
     minuend = set(minuend)
     subtrahend = set(subtrahend)
@@ -227,7 +243,8 @@ class Message:
         self.payload = Addict(payload if payload else {})
         self.raw = raw
 
-    __repr__ = __repr__
+    def __repr__(self):
+        return f'Message(id={self.id})'
 
     @property
     @lru_cache()
@@ -298,7 +315,10 @@ class Thread:
         self.historyId = historyId
         self.snippet = snippet
 
-    __repr__ = __repr__
+    def __repr__(self):
+        return f'Thread(id={self.id}, messages={self.messages}, historyId={self.historyId}, snippet={self.snippet})'
+
+    __str__ = __repr__
 
     @property
     def labels(self):
@@ -351,6 +371,10 @@ class Thread:
             return self.labels[0] == labels
         return False
 
+    @property
+    def message_ids(self):
+        return [m.id for m in self.messages]
+
     def is_uptodate(self, body):
         def is_uptodate(labels, body):
             if len(intersect(labels, body.addLabelIds)) != len(body.addLabelIds):
@@ -363,76 +387,118 @@ class Thread:
         return all(is_uptodate(labels, body) for labels in self.labels)
 
 class Filter:
-    def __init__(self, name=None, subject=None, sender=None, fr=None, to=None, cc=None, bcc=None, precedence=None, addLabelIds=None, removeLabelIds=None, **headers):
+    def __init__(self, name=None, actions=None, **headers):
         self.name = name
-        self.subject = subject
-        self.sender = sender
-        self.fr = tuplify(fr)
-        self.to = to
-        self.cc = tuplify(cc)
-        self.bcc = tuplify(bcc)
-        self.precedence = precedence
-        self.addLabelIds = tuple([] if addLabelIds is None else set(addLabelIds))
-        self.removeLabelIds = tuple([] if removeLabelIds is None else set(removeLabelIds))
-        self.headers = headers
-
-        if not is_valid(self):
-            raise LabelIntersectionError(self.addLabelIds, self.removeLabelIds)
+        self.actions = tuplify(actions)
+        self.headers = {
+            h: tuplify(v) if h in ('fr', 'cc', 'bcc') else v
+            for h, v
+            in headers.items()
+        }
 
     __repr__ = __repr__
 
     def to_json(self):
         return {
             'name': self.name,
-            'subject': self.subject,
-            'sender': self.sender,
-            'fr': self.fr,
-            'to': self.to,
-            'cc': self.cc,
-            'bcc': self.bcc,
-            'precedence': self.precedence,
-            'addLabelIds': tuple(self.addLabelIds),
-            'removeLabelIds': tuple(self.removeLabelIds),
+            'actions': self.actions,
             'headers': self.headers,
         }
 
-class Change:
-    def __init__(self, sieve, thread, filters):
-        self.sieve = sieve
-        self.thread = thread
-        self.filters = filters
+class Labels:
+    def __init__(self, add=None, remove=None):
+        self.add = add or {}
+        self.remove = remove or {}
 
-    __repr__ = __repr__
+    def __hash__(self):
+        items = tuple(self.add.items()) + tuple(self.remove.items())
+        return hash(items)
+
+    def __eq__(self, other):
+        if isinstance(other, Labels):
+            return self.add == other.add and self.remove == other.remove
+        return False
+
+    def __bool__(self):
+        if len(self.add) or len(self.remove):
+            return True
+        return False
+
+    def __repr__(self):
+        return f'Lables(add={self.add_names}, remove={self.remove_names})'
+
+    def __add__(self, other):
+        result = Labels(
+            add=dict(self.add, **other.add),
+            remove=dict(self.remove, **other.remove),
+        )
+        if intersect(result.add.keys(), result.remove.keys()):
+            raise LabelIntersectionError(result.add_names, result.remove_names)
+        return result
+
+    @property
+    def add_ids(self):
+        return tuplify(list(self.add.keys()))
+
+    @property
+    def remove_ids(self):
+        return tuplify(list(self.remove.keys()))
+
+    @property
+    def add_names(self):
+        return tuplify(list(self.add.values()))
+
+    @property
+    def remove_names(self):
+        return tuplify(list(self.remove.values()))
+
+    def to_json(self):
+        return dict(
+            addLabelIds=self.add_ids,
+            removeLabelIds=self.remove_ids,
+        )
+
+class Change:
+    def __init__(self, sieve, labels, message_ids):
+        self.sieve = sieve
+        self.labels = labels
+        self.message_ids = message_ids
+
+    def __repr__(self):
+        return f'Change(lables={self.labels}, message_ids={len(self.message_ids)})'
 
     @asyncify
-    def execute(self):
-        body = Addict(addLabelIds=[], removeLabelIds=[])
-        logger.info(f'thread.id={self.thread.id}: "{self.thread.subject}"')
-        logger.debug(f'thread.labels={self.thread.labels}')
-        for f in self.filters:
-            body.addLabelIds += f.addLabelIds
-            body.removeLabelIds += f.removeLabelIds
-            if not is_valid(body):
-                raise LabelIntersectionError(body.addLabelIds, body.removeLabelIds)
-        body2 = self.sieve.body_ids_to_labels(body)
-        if self.thread.is_uptodate(body):
-            logger.debug(f'thread is up to date, already has changes {pf(body2)}')
-        else:
-            logger.info(f'thread needs changes {pf(body2)}')
-            try:
-                self.sieve.threads_api.modify(userId='me', id=self.thread.id, body=body).execute()
-                logger.info('completed successfullly')
-            except HttpError as e:
-                logger.info(f'Error executing actions={body} for thread.id={self.thread.id}: "{self.thread.subject}"')
-                raise e
+    def execute_batch(self, batch):
+        logger.debug(f'execute_batch: labels={self.labels} len(batch)={len(batch)}')
+        body = dict(
+            ids=batch,
+            **self.labels.to_json())
+        result = self.sieve.messages_api.batchModify(userId='me', body=body).execute()
+        logger.debug(f'execute_batch: result={result}')
+        return [result]
 
+    async def execute(self):
+        def batch_by(items, count):
+            if items:
+                if len(items) > count:
+                    return items[:count], items[1000:]
+                return items, []
+            return [], []
+        results = []
+        batch, rem = batch_by(self.message_ids, 1000)
+        while batch:
+            results += await self.execute_batch(batch)
+            batch, rem = batch_by(rem, 1000)
+        return results
 
-class Wave:
-    def __init__(self, name, sieve, query, filters):
-        self.name = name
+class Spec:
+    def __init__(self, name, sieve, query, filters, max_results=500):
+        self.name = name or 'unnamed'
         self.sieve = sieve
         self.query = query
         self.filters = filters
+        self.max_results = max_results
+        self.default = None
 
     def to_json(self):
         return  dict(
@@ -443,17 +509,89 @@ class Wave:
 
     __repr__ = __repr__
 
+    __str__ = __repr__
+
+    @asyncify
+    def get_threads_ids(self, query=None, max_results=None):
+        threads_req = self.sieve.threads_api.list(userId='me', q=query, maxResults=max_results)
+        thread_ids = []
+        while threads_req:
+            threads_res = threads_req.execute()
+            threads = threads_res.get('threads', [])
+            logger.debug(f'len(threads)={len(threads)}')
+            thread_ids += [thread['id'] for thread in threads]
+            threads_req = self.sieve.threads_api.list_next(threads_req, threads_res)
+        return thread_ids
+
+    async def filter_thread(self, thread, filters):
+        labels = Labels()
+        for f in filters:
+            if not f.headers: #if no headers, apply filter
+                labels += self.sieve.actions_to_labels(f.actions)
+                continue
+            matches = [False] * len(f.headers)
+            for i, (h, v) in enumerate(f.headers.items()):
+                if h not in thread.headers:
+                    break
+                if h in ('subject', 'sender'):
+                    matches[i] = len(FuzzyList(thread.headers[h]).include(v)) > 0
+                elif is_sequence(v):
+                    matches[i] = any([FuzzyList(m.headers[h]).include(*v) for m in thread.messages])
+                else:
+                    matches[i] = any([FuzzyList(m.headers[h]).include(v) for m in thread.messages])
+            if all(matches):
+                labels += self.sieve.actions_to_lables(f.actions)
+        if labels:
+            return (labels, thread.message_ids)
+        elif self.default:
+            return (self.sieve.actions_to_labels(self.default.actions), thread.message_ids)
+        return (None, [])
+
+    @asyncify
+    def hydrate_thread(self, thread_id):
+        logger.debug(f'hydrating thread_id={thread_id}')
+        return Thread(sieve=self.sieve, **self.sieve.threads_api.get(userId='me', id=thread_id, format='metadata', metadataHeaders=METADATA_HEADERS).execute())
+
+    async def filter_gmail(self, thread_ids, filters):
+        work = {}
+        work = defaultdict(list)
+        for thread_id in thread_ids:
+            thread = await self.hydrate_thread(thread_id)
+            labels, message_ids = await self.filter_thread(thread, filters)
+            if labels:
+                work[labels].extend(message_ids)
+
+        print(f'len(work.keys())={len(work.keys())}')
+        return [
+            Change(self.sieve, labels, message_ids)
+            for labels, message_ids
+            in work.items()
+        ]
+
+    async def execute_changes(self, changes):
+        for change in changes:
+            await change.execute()
+            logger.info('*'*80)
+
+    async def run(self):
+        logger.info(f'name={self.name} query={self.query} max_results={self.max_results}')
+        thread_ids = await self.get_threads_ids(query=self.query, max_results=self.max_results)
+        logger.info(f'len(thread_ids)={len(thread_ids)}')
+        changes = await self.filter_gmail(thread_ids, self.filters)
+        logger.info(f'len(changes)={len(changes)}')
+        await self.execute_changes(changes)
+
 class Sieve:
     def __init__(self, creds_json, sieve_yml, **kwargs):
-        self.auth(creds_json)
-        self.gmail = build('gmail', 'v1', credentials=self.creds)
+        creds = auth(creds_json)
+        self.gmail = build('gmail', 'v1', credentials=creds)
         self.profile = self.gmail.users().getProfile(userId='me').execute()
         self.labels_api = self.gmail.users().labels()
         self.threads_api = self.gmail.users().threads()
-        self.directory = build('admin', 'directory_v1', credentials=self.creds)
+        self.messages_api = self.gmail.users().messages()
+        self.directory = build('admin', 'directory_v1', credentials=creds)
         self.groups_api = self.directory.groups()
-        #self.load(sieve_yml)
-        self.load_yml('sieve2.yml')
+        self.load_yml(sieve_yml)
 
     __repr__ = __repr__
 
@@ -473,116 +611,61 @@ class Sieve:
             in self.labels_api.list(userId='me').execute()['labels']
         }
 
-    def body_ids_to_labels(self, body):
+    def label_ids_to_names(self, body):
         return Addict(
             addLabelIds=tuple(self.ids_to_labels[id] for id in body.addLabelIds),
             removeLabelIds=tuple(self.ids_to_labels[id] for id in body.removeLabelIds)
         )
 
-    def auth(self, creds_json):
-        creds = None
-        creds_json = os.path.realpath(os.path.expanduser(creds_json))
-        token_json = os.path.join(os.path.dirname(creds_json), '.token.json')
-        # The file token.json stores the user's access and refresh tokens, and is
-        # created automatically when the authorization flow completes for the first
-        # time.
-        if os.path.exists(token_json):
-            creds = Credentials.from_authorized_user_file(token_json, SCOPES)
-        # If there are no (valid) credentials available, let the user log in.
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(creds_json, SCOPES)
-                creds = flow.run_local_server(port=0)
-            # Save the credentials for the next run
-            with open(token_json, 'w') as token:
-                token.write(pf(creds.to_json()))
-        self.creds = creds
-
-    def actions_to_label_ids(self, actions):
-        body = Addict(removeLabelIds=[], addLabelIds=[])
+    def actions_to_labels(self, actions):
+        add = {}
+        remove = {}
         for action in actions:
             if action in REMOVE_ACTION_TO_LABEL:
-                body.removeLabelIds += [REMOVE_ACTION_TO_LABEL[action]]
+                label_id = REMOVE_ACTION_TO_LABEL[action]
+                remove[label_id] = label_id
             elif action in ADD_ACTION_TO_LABEL:
-                body.addLabelIds += [ADD_ACTION_TO_LABEL[action]]
+                label_id = ADD_ACTION_TO_LABEL[action]
+                add[label_id] = label_id
             elif action in self.labels_to_ids:
-                body.addLabelIds += [self.labels_to_ids[action]]
+                label_id = self.labels_to_ids[action]
+                add[label_id] = action
             else:
                 try:
                     result = self.labels_api.create(userId='me', body={'name': action}).execute()
-                    body.addLabelIds += [result['id']]
+                    label_id = result['id']
+                    add[label_id] = action
                 except HttpError as e:
                     print(f'Error creating label="{action}"')
                     if e.resp.status == 409:
-                        body.addLabelIds += [self.labels_to_ids[action]]
+                        label_id = self.labels_to_ids[action]
+                        add[label_id] = action
                     else:
                         raise e
-        return body
-
-#        self.filters = []
-#        if cfg.spammers.sender:
-#            self.filters += [
-#                Filter(
-#                    name=f'spammer-{sender}',
-#                    sender=sender,
-#                    **self.actions_to_label_ids([
-#                        'archive',
-#                        f'_/{sender}',
-#                    ])
-#                )
-#                for sender
-#                in cfg.spammers.sender
-#            ]
+        return Labels(add, remove)
 
     def load_spammer(self, label, *items):
         return [
             Filter(
                 name=f'spammer-{label}',
                 **{label: item},
-                **self.actions_to_label_ids([
+                actions=[
                     'archive',
                     f'_/{item}',
                 ])
-            )
             for item
             in items
         ]
-
-#        if cfg.filters:
-#            default = cfg.filters.pop('default', None)
-#            if default:
-#                self.default = Filter(
-#                    name='default',
-#                    **self.actions_to_label_ids(default.get('actions'))
-#                )
-#            self.filters += [
-#                Filter(
-#                    name=name,
-#                    subject=body.get('subject'),
-#                    sender=body.get('sender'),
-#                    fr=tuplify(body.get('fr')),
-#                    to=body.get('to'),
-#                    cc=tuplify(body.get('cc')),
-#                    bcc=tuplify(body.get('bcc')),
-#                    precedence=body.get('precedence'),
-#                    **self.actions_to_label_ids(body.get('actions')),
-#                    headers={},
-#                )
-#                for name, body
-#                in cfg.filters.items()
-#            ]
 
     def load_filter(self, name, actions=None, **headers):
         assert actions != None, 'actions cannot be None'
         return Filter(
             name,
             **headers,
-            **self.actions_to_label_ids(actions)
+            actions=actions or []
         )
 
-    def load_wave(self, name, query=None, spammers=None, filters=None):
+    def load_spec(self, name, query=None, spammers=None, filters=None):
         assert spammers != None or filters != None
         filters_ = []
         if spammers:
@@ -597,168 +680,22 @@ class Sieve:
                 for name, body
                 in filters.items()
             ]
-        return Wave(name, self, query, filters_)
+        return Spec(name, self, query, filters_)
 
-    def load_yml(self, sieve_yml='sieve2.yml'):
+    def load_yml(self, sieve_yml):
         sieve_yml = os.path.expanduser(sieve_yml)
         if not os.path.exists(sieve_yml):
             raise SieveYmlNotFoundError(sieve_yml)
-        cfg = Addict({
-            key.replace('-', '_'): value
-            for key, value
-            in yaml.safe_load(open(sieve_yml)).items()
-        })
-        self.waves = [
-            self.load_wave(name, **body)
-            for name, body
-            in cfg.waves.items()
-        ]
-        ppl([w.to_json() for w in self.waves])
-        sys.exit(1)
-
-    def load(self, sieve_yml):
-        self.default = None
-        sieve_yml = os.path.expanduser(sieve_yml)
-        if not os.path.exists(sieve_yml):
-            raise SieveYmlNotFoundError(sieve_yml)
-        cfg = Addict({
-            key.replace('-', '_'): value
-            for key, value
-            in yaml.safe_load(open(sieve_yml)).items()
-        })
-        self.filters = []
-        if cfg.spammers.sender:
-            self.filters += [
-                Filter(
-                    name=f'spammer-{sender}',
-                    sender=sender,
-                    **self.actions_to_label_ids([
-                        'archive',
-                        f'_/{sender}',
-                    ])
-                )
-                for sender
-                in cfg.spammers.sender
-            ]
-        if cfg.spammers.fr:
-            self.filters += [
-                Filter(
-                    name=f'spammer-{fr}',
-                    fr=fr,
-                    **self.actions_to_label_ids([
-                        'archive',
-                        f'_/{fr}',
-                    ])
-                )
-                for fr
-                in cfg.spammers.fr
-            ]
-        if cfg.spammers.to:
-            self.filters += [
-                Filter(
-                    name=f'spammer-{to}',
-                    to=to,
-                    **self.actions_to_label_ids([
-                        'archive',
-                        f'_/{to}',
-                    ])
-                )
-                for to
-                in cfg.spammers.to
-            ]
-        if cfg.filters:
-            default = cfg.filters.pop('default', None)
-            if default:
-                self.default = Filter(
-                    name='default',
-                    **self.actions_to_label_ids(default.get('actions'))
-                )
-            self.filters += [
-                Filter(
-                    name=name,
-                    subject=body.get('subject'),
-                    sender=body.get('sender'),
-                    fr=tuplify(body.get('fr')),
-                    to=body.get('to'),
-                    cc=tuplify(body.get('cc')),
-                    bcc=tuplify(body.get('bcc')),
-                    precedence=body.get('precedence'),
-                    **self.actions_to_label_ids(body.get('actions')),
-                    headers={},
-                )
-                for name, body
-                in cfg.filters.items()
-            ]
-
-        self.cfg = cfg
+        docs = yaml.safe_load_all(open(sieve_yml))
+        self.specs = [self.load_spec(**doc) for doc in docs]
 
     def show_filters(self):
-        filters = self.filters + [self.default] if self.default else []
-        pp([f.to_json() for f in filters])
+        pp([w.to_json() for w in self.specs])
 
-    async def filter_thread(self, thread, filters):
-        applied_filters = []
-        for f in filters:
-            subject, sender, fr, to, cc, bcc = [True]*6
-            if f.subject:
-                subject = len(FuzzyList(thread.subjects).include(f.subject))
-            if f.sender:
-                sender = len(FuzzyList(thread.senders).include(f.sender))
-            if f.fr:
-                fr = any([FuzzyList(m.fr).include(*f.fr) for m in thread.messages])
-            if f.to:
-                to = any([FuzzyList(m.to).include(f.to) for m in thread.messages])
-            if f.cc:
-                cc = any([FuzzyList(m.cc).include(*f.cc) for m in thread.messages])
-            if f.bcc:
-                bcc = any([FuzzyList(m.bcc).include(*f.bcc) for m in thread.messages])
-            if subject and sender and fr and to and cc and bcc:
-                applied_filters += [f]
-                break #FIXME: should be able to apply multiple filters
-        if applied_filters:
-            return [Change(self, thread, applied_filters)]
-        elif self.default:
-            return [Change(self, thread, [self.default])]
-        return []
-
-    @asyncify
-    def get_threads_ids(self, query=None, max_results=None):
-        threads_req = self.threads_api.list(userId='me', q=query, maxResults=max_results)
-        thread_ids = []
-        while threads_req:
-            threads_res = threads_req.execute()
-            threads = threads_res.get('threads', [])
-            logger.debug(f'len(threads)={len(threads)}')
-            thread_ids += [thread['id'] for thread in threads]
-            threads_req = self.threads_api.list_next(threads_req, threads_res)
-        return thread_ids
-
-    @asyncify
-    def hydrate_thread(self, thread_id):
-        return Thread(sieve=self, **self.threads_api.get(userId='me', id=thread_id, format='metadata', metadataHeaders=METADATA_HEADERS).execute())
-
-    async def filter_gmail(self, thread_ids, filters):
-        changes = []
-        for thread_id in thread_ids:
-            thread = await self.hydrate_thread(thread_id)
-            changes += await self.filter_thread(thread, filters)
-        return changes
-
-    async def execute_changes(self, changes):
-        for change in changes:
-            await change.execute()
-            logger.info('*'*80)
-
-    async def _run(self):
-        logger.debug(f'query={self.cfg.query} max_results={self.cfg.max_results}')
-        thread_ids = await self.get_threads_ids(query=self.cfg.query, max_results=self.cfg.max_results)
-        logger.info(f'len(thread_ids)={len(thread_ids)}')
-        changes = await self.filter_gmail(thread_ids, self.filters)
-        logger.info(f'len(changes)={len(changes)}')
-        await self.execute_changes(changes)
 
     async def run(self):
-        return await self._run()
+        for spec in self.specs:
+            await spec.run()
 
 async def main(args):
     parser = ArgumentParser()
@@ -791,9 +728,10 @@ async def _signal_handler():
         print("cleaning and exiting")
         sys.exit(1)
 
-def signal_handler(*args):
-    loop.create_task(_signal_handler())
+if __name__ == '__main__':
+    def signal_handler(*args):
+        loop.create_task(_signal_handler())
 
-signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
 
-loop.run_until_complete(main(sys.argv[1:]))
+    loop.run_until_complete(main(sys.argv[1:]))
