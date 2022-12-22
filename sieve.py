@@ -131,7 +131,7 @@ if os.path.islink(__file__):
 
 NAME, EXT = os.path.splitext(REAL_NAME)
 
-loop = asyncio.new_event_loop()
+LOOP = asyncio.new_event_loop()
 
 class LabelIntersectionError(Exception):
     def __init__(self, addLabelIds, removeLabelIds):
@@ -704,7 +704,7 @@ async def main(args):
 
 async def _signal_handler():
     try:
-        tasks = asyncio.all_tasks(loop)
+        tasks = asyncio.all_tasks(LOOP)
         for task in tasks:
             task.cancel()
     except RuntimeError as err:
@@ -714,8 +714,8 @@ async def _signal_handler():
 
 if __name__ == '__main__':
     def signal_handler(*args):
-        loop.create_task(_signal_handler())
+        LOOP.create_task(_signal_handler())
 
     signal.signal(signal.SIGINT, signal_handler)
 
-    loop.run_until_complete(main(sys.argv[1:]))
+    LOOP.run_until_complete(main(sys.argv[1:]))
