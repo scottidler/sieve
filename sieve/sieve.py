@@ -32,7 +32,6 @@ from googleapiclient.errors import HttpError
 
 from addict import Addict
 from ruamel import yaml
-from argparse import ArgumentParser
 from itertools import chain
 from functools import lru_cache, wraps
 from collections import defaultdict
@@ -41,6 +40,7 @@ from concurrent.futures import ThreadPoolExecutor
 from leatherman.fuzzy import FuzzyList
 from leatherman.repr import __repr__
 from leatherman.dbg import dbg
+from leatherman.dictionary import head_body
 
 LOGGING_LEVEL = os.environ.get('LOGGING_LEVEL', 'INFO').upper()
 
@@ -133,15 +133,32 @@ NAME, EXT = os.path.splitext(REAL_NAME)
 
 LOOP = asyncio.new_event_loop()
 
-class LabelIntersectionError(Exception):
-    def __init__(self, addLabelIds, removeLabelIds):
-        msg = f'error: addLabelIds={addLabelIds} and removeLabelIds={removeLabelIds} intersect'
-        super().__init__(msg)
-
 class SieveYmlNotFoundError(Exception):
     def __init__(self, sieve_yml):
         msg = f'error: sieve_yml={sieve_yml} not found'
         super().__init__(msg)
+
+class LabelIntersectionError(Exception):
+    def __init__(self, labels):
+        msg = f'error: labels={labels} intersect'
+        super().__init__(msg)
+
+async def _signal_handler():
+    try:
+        tasks = asyncio.all_tasks(LOOP)
+        for task in tasks:
+            task.cancel()
+    except RuntimeError as err:
+        print('SIGINT or SIGTSTP raised')
+        print("cleaning and exiting")
+        sys.exit(1)
+
+def load_yml(sieve_yml):
+    sieve_yml = os.path.expanduser(sieve_yml)
+    if not os.path.exists(sieve_yml):
+        raise SieveYmlNotFoundError(sieve_yml)
+    docs = yaml.safe_load_all(open(sieve_yml))
+    return [Addict(doc) for doc in docs]
 
 def auth(creds_json):
     creds = None
@@ -248,47 +265,6 @@ class Message:
 
     @property
     @lru_cache()
-    def subject(self):
-        '''subject: singular'''
-        return self.headers.get('subject')
-
-    @property
-    @lru_cache()
-    def sender(self):
-        '''sender: plural'''
-        return format_emails(self.headers.get('sender'))
-
-    @property
-    @lru_cache()
-    def fr(self):
-        '''from: plural'''
-        return format_emails(self.headers.get('from'))
-
-    @property
-    @lru_cache()
-    def to(self):
-        '''to: plural'''
-        return format_emails(self.headers.get('to'))
-
-    @property
-    @lru_cache()
-    def cc(self):
-        '''cc: plural'''
-        return format_emails(self.headers.get('cc'))
-
-    @property
-    @lru_cache()
-    def bcc(self):
-        '''bcc: plural'''
-        return format_emails(self.headers.get('bcc'))
-
-    @property
-    def prescedence(self):
-        '''prescedence: singular'''
-        return self.headers.get('prescedence')
-
-    @property
-    @lru_cache()
     def labels(self):
         '''labels: plural'''
         return {
@@ -321,54 +297,24 @@ class Thread:
     __str__ = __repr__
 
     @property
-    def labels(self):
+    def label_ids(self):
         '''labels: plural'''
         return [m.labelIds for m in self.messages]
 
     @property
     def labels_are_uniform(self):
         '''labels_are_uniform: singular'''
-        return len(set(self.labels)) == 1
+        return len(set(self.label_ids)) == 1
 
     @property
-    def subject(self):
-        '''subject: singular'''
-        return self.messages[0].subject
-
-    @property
-    def subjects(self):
-        '''subjects: plural'''
-        return tuple(m.subject for m in self.messages)
-
-    @property
-    def senders(self):
-        '''senders: plural'''
-        return tuple(m.sender for m in self.messages)
-
-    @property
-    def frs(self):
-        '''frs: plural'''
-        return tuple(m.fr for m in self.messages)
-
-    @property
-    def tos(self):
-        '''tos: plural'''
-        return tuple(m.to for m in self.messages)
-
-    @property
-    def ccs(self):
-        '''ccs: plural'''
-        return tuple(m.cc for m in self.messages)
-
-    @property
-    def bccs(self):
-        '''bccs: plural'''
-        return tuple(m.bcc for m in self.messages)
+    def headers(self):
+        '''headers: plural'''
+        return tuple(m.headers for m in self.messages)
 
     def labels_match(self, labels):
         '''labels_match: singular'''
         if self.labels_are_uniform:
-            return self.labels[0] == labels
+            return self.label_ids[0] == labels
         return False
 
     @property
@@ -432,8 +378,8 @@ class Labels:
             add=dict(self.add, **other.add),
             remove=dict(self.remove, **other.remove),
         )
-        if intersect(result.add.keys(), result.remove.keys()):
-            raise LabelIntersectionError(result.add_names, result.remove_names)
+        if intersect(result.add_ids, result.remove_ids):
+            raise LabelIntersectionError(result)
         return result
 
     @property
@@ -492,10 +438,10 @@ class Change:
         return results
 
 class Spec:
-    def __init__(self, sieve, name=None, query=None, spammers=None, filters=None, max_results=500):
+    def __init__(self, sieve, name=None, query=None, spammers=None, filters=None, max_results=500, filter_pattern=None, query_override=None):
         self.sieve = sieve
         self.name = name or 'unnamed'
-        self.query = query
+        self.query = query_override or query
         self.max_results = max_results
         self.default = None
         self.filters = list(chain(*[
@@ -521,6 +467,12 @@ class Spec:
             for name, body
             in (filters or {}).items()
         ]
+        self.filters = [
+            f
+            for f
+            in self.filters
+            if not filter_pattern or f.name == filter_pattern
+        ]
 
     def to_json(self):
         return  dict(
@@ -540,7 +492,7 @@ class Spec:
         while threads_req:
             threads_res = threads_req.execute()
             threads = threads_res.get('threads', [])
-            logger.debug(f'len(threads)={len(threads)}')
+            logger.debug(f'get_threads_ids: len(threads)={len(threads)}')
             thread_ids += [thread['id'] for thread in threads]
             threads_req = self.sieve.threads_api.list_next(threads_req, threads_res)
         return thread_ids
@@ -575,19 +527,16 @@ class Spec:
         return Thread(sieve=self.sieve, **self.sieve.threads_api.get(userId='me', id=thread_id, format='metadata', metadataHeaders=METADATA_HEADERS).execute())
 
     async def filter_gmail(self, thread_ids, filters):
-        work = {}
-        work = defaultdict(list)
+        changes = defaultdict(list)
         for thread_id in thread_ids:
             thread = await self.hydrate_thread(thread_id)
             labels, message_ids = await self.filter_thread(thread, filters)
             if labels:
-                work[labels].extend(message_ids)
-
-        print(f'len(work.keys())={len(work.keys())}')
+                changes[labels].extend(message_ids)
         return [
             Change(self.sieve, labels, message_ids)
             for labels, message_ids
-            in work.items()
+            in changes.items()
         ]
 
     async def execute_changes(self, changes):
@@ -596,16 +545,32 @@ class Spec:
             logger.info('*'*80)
 
     async def run(self):
-        logger.info(f'name={self.name} query={self.query} max_results={self.max_results}')
+        logger.info(f'name={self.name} query="{self.query}" max_results={self.max_results}')
         thread_ids = await self.get_threads_ids(query=self.query, max_results=self.max_results)
-        logger.info(f'len(thread_ids)={len(thread_ids)}')
+        logger.info(f'# of thead_ids={len(thread_ids)}')
         changes = await self.filter_gmail(thread_ids, self.filters)
-        logger.info(f'len(changes)={len(changes)}')
+        logger.info(f'# of changes={len(changes)}')
         await self.execute_changes(changes)
 
 class Sieve:
-    def __init__(self, creds_json, docs):
+    def __init__(
+            self,
+            sieve_yml=None,
+            creds_json=None,
+            spec_pattern=None,
+            query_override=None,
+            filter_pattern=None,
+            headers_override=None,
+            actions_override=None,
+            verbose=False,
+            nerf=False,
+            **kwargs):
         creds = auth(creds_json)
+        self.spec_pattern = spec_pattern
+        self.query_override = query_override
+        self.filter_pattern = filter_pattern
+        self.headers_override = headers_override
+        self.actions_override = actions_override
         self.gmail = build('gmail', 'v1', credentials=creds)
         self.profile = self.gmail.users().getProfile(userId='me').execute()
         self.labels_api = self.gmail.users().labels()
@@ -613,7 +578,61 @@ class Sieve:
         self.messages_api = self.gmail.users().messages()
         self.directory = build('admin', 'directory_v1', credentials=creds)
         self.groups_api = self.directory.groups()
-        self.specs = [Spec(self, **spec) for spec in docs]
+        self.verbose = verbose
+        self.nerf = nerf
+        specs = self.load_sieve(sieve_yml)
+        self.specs = [Spec(self, **spec) for spec in specs]
+
+    def load_sieve(self, sieve_yml):
+        specs = load_yml(sieve_yml)
+        if self.spec_pattern:
+            specs = [spec for spec in specs if spec.name == self.spec_pattern]
+            match len(specs):
+                case 1: # matched one spec
+                    specs = [self.load_spec(specs[0])]
+                case 0: # build a new spec
+                    specs = [self.build_spec()]
+                case _:
+                    raise ValueError(f'spec_pattern={self.spec_pattern} matched multiple specs')
+        return specs
+
+    def load_spec(self, spec):
+        if self.query_override:
+            spec.query = self.query_override
+        if self.filter_pattern:
+            filters = [{name: body} for name, body in spec.filters.items() if name == self.filter_pattern]
+            match len(filters):
+                case 1: # matched one filter
+                    spec.filters = self.load_filter(filters[0])
+                case 0: # build a new filter
+                    spec.filters = self.build_filter()
+                case _:
+                    raise ValueError(f'filter_pattern={self.filter_pattern} matched multiple filters')
+        return spec
+
+    def build_spec(self):
+        spec = Spec(self, name=self.spec_pattern, query=self.query_override, filters=self.build_filter())
+        return spec
+
+    def load_filter(self, filter):
+        name, body = head_body(filter)
+        dbg(name, body, filter)
+        result = Addict({
+            name: dict(
+                headers=self.headers_override or body.headers,
+                actions=self.actions_override or body.actions,
+            )
+        })
+        return result
+
+    def build_filter(self):
+        result = Addict({
+            self.filter_pattern: dict(
+                headers=self.headers_override,
+                actions=self.actions_override,
+            )
+        })
+        return result
 
     __repr__ = __repr__
 
@@ -669,53 +688,14 @@ class Sieve:
     def show_filters(self):
         pp([w.to_json() for w in self.specs])
 
-    async def run(self):
+    async def _run(self):
         for spec in self.specs:
             await spec.run()
 
-def load_yml(sieve_yml):
-    sieve_yml = os.path.expanduser(sieve_yml)
-    if not os.path.exists(sieve_yml):
-        raise SieveYmlNotFoundError(sieve_yml)
-    docs = yaml.safe_load_all(open(sieve_yml))
-    return [Addict(doc) for doc in docs]
+    def run(self):
+        def signal_handler(*args):
+            LOOP.create_task(_signal_handler())
 
-async def main(args):
-    parser = ArgumentParser()
-    parser.add_argument(
-        '--creds-json',
-        default='./.creds.json',
-        help='default="%(default)s"; path to the creds file')
-    parser.add_argument(
-        '--sieve-yml',
-        default='./sieve.yml',
-        help='default="%(default)s"; path to the sieve config file')
-    parser.add_argument(
-        '-f', '--show-filters',
-        action='store_true',
-        help='toggle showing the filters')
-    ns = parser.parse_args(args)
-    docs = load_yml(ns.sieve_yml)
-    sieve = Sieve(ns.creds_json, docs)
-    if ns.show_filters:
-        sieve.show_filters()
-    else:
-        await sieve.run()
+        signal.signal(signal.SIGINT, signal_handler)
 
-async def _signal_handler():
-    try:
-        tasks = asyncio.all_tasks(LOOP)
-        for task in tasks:
-            task.cancel()
-    except RuntimeError as err:
-        print('SIGINT or SIGTSTP raised')
-        print("cleaning and exiting")
-        sys.exit(1)
-
-if __name__ == '__main__':
-    def signal_handler(*args):
-        LOOP.create_task(_signal_handler())
-
-    signal.signal(signal.SIGINT, signal_handler)
-
-    LOOP.run_until_complete(main(sys.argv[1:]))
+        LOOP.run_until_complete(self._run())

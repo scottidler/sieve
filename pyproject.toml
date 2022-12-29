@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "sieve"
+version = "0.1.0"
+description = ""
+authors = ["Scott A. Idler <scott.a.idler@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+addict = "^2.4.0"
+asyncio = "^3.4.3"
+argparse = "^1.4.0"
+#functools = "^0.5"
+google-auth = "^2.15.0"
+google-auth-oauthlib = "^0.8.0"
+google-api-python-client = "^2.70.0"
+google-auth-httplib2 = "^0.1.0"
+leatherman = "^0.1.15"
+logging = "^0.4.9.6"
+"ruamel.yaml" = "^0.17.21"
+signal2 = "^0.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
