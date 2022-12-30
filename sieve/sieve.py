@@ -616,23 +616,20 @@ class Sieve:
 
     def load_filter(self, filter):
         name, body = head_body(filter)
-        dbg(name, body, filter)
-        result = Addict({
+        return Addict({
             name: dict(
                 headers=self.headers_override or body.headers,
                 actions=self.actions_override or body.actions,
             )
         })
-        return result
 
     def build_filter(self):
-        result = Addict({
+        return Addict({
             self.filter_pattern: dict(
                 headers=self.headers_override,
                 actions=self.actions_override,
             )
         })
-        return result
 
     __repr__ = __repr__
 
@@ -677,7 +674,7 @@ class Sieve:
                     label_id = result['id']
                     add[label_id] = action
                 except HttpError as e:
-                    print(f'Error creating label="{action}"')
+                    logger.error(f'Error creating label="{action}"')
                     if e.resp.status == 409:
                         label_id = self.labels_to_ids[action]
                         add[label_id] = action
