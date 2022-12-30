@@ -42,19 +42,8 @@ from leatherman.repr import __repr__
 from leatherman.dbg import dbg
 from leatherman.dictionary import head_body
 
-LOGGING_LEVEL = os.environ.get('LOGGING_LEVEL', 'INFO').upper()
-
-logger = logging.getLogger('sieve')
 logging.getLogger('googleapiclient').setLevel(logging.ERROR)
-logging.basicConfig(
-    format='%(asctime)s|%(name)s|%(message)s',
-    level=LOGGING_LEVEL,
-    handlers=[
-        logging.FileHandler('sieve.log'),
-        logging.StreamHandler()
-    ]
-)
-
+logger = logging.getLogger('sieve')
 # If modifying these scopes, delete the file token.json.
 SCOPES = [
 	'https://mail.google.com/', ## for gmail
@@ -259,9 +248,10 @@ class Message:
         self.snippet = snippet
         self.payload = Addict(payload if payload else {})
         self.raw = raw
+        logger.debug(self)
 
     def __repr__(self):
-        return f'Message(id={self.id})'
+        return f'Message(id={self.id}, thread_id={self.threadId}, labelIds={self.labelIds}, historyId={self.historyId})'
 
     @property
     @lru_cache()
@@ -290,9 +280,10 @@ class Thread:
         self.messages = [Message(thread=self, **message) for message in messages]
         self.historyId = historyId
         self.snippet = snippet
+        logger.debug(self)
 
     def __repr__(self):
-        return f'Thread(id={self.id}, messages={self.messages}, historyId={self.historyId}, snippet={self.snippet})'
+        return f'Thread(id={self.id}, messages={self.messages}, historyId={self.historyId})'
 
     __str__ = __repr__
 
@@ -341,6 +332,7 @@ class Filter:
             for h, v
             in headers.items()
         }
+        logger.debug(self)
 
     __repr__ = __repr__
 
@@ -355,6 +347,7 @@ class Labels:
     def __init__(self, add=None, remove=None):
         self.add = add or {}
         self.remove = remove or {}
+        logger.debug(self)
 
     def __hash__(self):
         items = tuple(self.add.items()) + tuple(self.remove.items())
@@ -410,6 +403,7 @@ class Change:
         self.labels = labels
         self.message_ids = message_ids
         self.nerf = nerf
+        logger.debug(self)
 
     def __repr__(self):
         return f'Change(lables={self.labels}, message_ids={len(self.message_ids)}, nerf={self.nerf})'
@@ -425,7 +419,6 @@ class Change:
             logger.info(msg)
             result = self.sieve.messages_api.batchModify(userId='me', body=dict(ids=batch, **labels)).execute()
             logger.debug(f'execute_batch: result={result}')
-        return [result]
 
     async def execute(self):
         def batch_by(items, count):
@@ -440,7 +433,18 @@ class Change:
             batch, rem = batch_by(rem, 1000)
 
 class Spec:
-    def __init__(self, sieve, name=None, query=None, spammers=None, filters=None, max_results=500, filter_pattern=None, query_override=None):
+    def __init__(
+        self, 
+        sieve, 
+        name=None, 
+        query=None, 
+        spammers=None, 
+        filters=None, 
+        max_results=500, 
+        filter_pattern=None, 
+        query_override=None, 
+        nerf=False):
+
         self.sieve = sieve
         self.name = name or 'unnamed'
         self.query = query_override or query
@@ -469,12 +473,8 @@ class Spec:
             for name, body
             in (filters or {}).items()
         ]
-        self.filters = [
-            f
-            for f
-            in self.filters
-            if not filter_pattern or f.name == filter_pattern
-        ]
+        self.nerf = nerf
+        logger.debug(self)
 
     def to_json(self):
         return  dict(
@@ -526,7 +526,13 @@ class Spec:
     @asyncify
     def hydrate_thread(self, thread_id):
         logger.debug(f'hydrating thread_id={thread_id}')
-        return Thread(sieve=self.sieve, **self.sieve.threads_api.get(userId='me', id=thread_id, format='metadata', metadataHeaders=METADATA_HEADERS).execute())
+        return Thread(
+            sieve=self.sieve, 
+            **self.sieve.threads_api.get(
+                userId='me', 
+                id=thread_id, 
+                format='metadata', 
+                metadataHeaders=METADATA_HEADERS).execute())
 
     async def filter_gmail(self, thread_ids, filters):
         changes = defaultdict(list)
@@ -544,14 +550,14 @@ class Spec:
     async def execute_changes(self, changes):
         for change in changes:
             await change.execute()
-            logger.info('*'*80)
+            logger.log(logging.NOTSET, '*'*80)
 
     async def run(self):
-        logger.info(f'name={self.name} query="{self.query}" max_results={self.max_results}')
+        logger.log(logging.NOTSET, f'name={self.name} query="{self.query}" max_results={self.max_results}')
         thread_ids = await self.get_threads_ids(query=self.query, max_results=self.max_results)
-        logger.info(f'# of thead_ids={len(thread_ids)}')
+        logger.log(logging.NOTSET, f'# of thead_ids={len(thread_ids)}')
         changes = await self.filter_gmail(thread_ids, self.filters)
-        logger.info(f'# of changes={len(changes)}')
+        logger.log(logging.NOTSET, f'# of changes={len(changes)}')
         await self.execute_changes(changes)
 
 class Sieve:
@@ -564,9 +570,9 @@ class Sieve:
             filter_pattern=None,
             headers_override=None,
             actions_override=None,
-            verbose=False,
             nerf=False,
             **kwargs):
+
         creds = auth(creds_json)
         self.spec_pattern = spec_pattern
         self.query_override = query_override
@@ -580,10 +586,13 @@ class Sieve:
         self.messages_api = self.gmail.users().messages()
         self.directory = build('admin', 'directory_v1', credentials=creds)
         self.groups_api = self.directory.groups()
-        self.verbose = verbose
         self.nerf = nerf
         specs = self.load_sieve(sieve_yml)
-        self.specs = [Spec(self, **spec) for spec in specs]
+        self.specs = [Spec(self, nerf=self.nerf, **spec) for spec in specs]
+        logger.debug(self)
+
+    def __repr__(self):
+        return f'Sieve(spec_pattern={self.spec_pattern} query_override={self.query_override} filter_pattern={self.filter_pattern} headers_override={self.headers_override} actions_override={self.actions_override} nerf={self.nerf})'
 
     def load_sieve(self, sieve_yml):
         specs = load_yml(sieve_yml)
@@ -613,23 +622,26 @@ class Sieve:
         return spec
 
     def build_spec(self):
-        spec = Spec(self, name=self.spec_pattern, query=self.query_override, filters=self.build_filter())
-        return spec
+        return Addict({
+            'name': self.spec_pattern,
+            'query': self.query_override,
+            'filters': self.build_filter(),
+        })
 
     def load_filter(self, filter):
         name, body = head_body(filter)
         return Addict({
             name: dict(
-                headers=self.headers_override or body.headers,
                 actions=self.actions_override or body.actions,
+                **(self.headers_override or body.headers),
             )
         })
 
     def build_filter(self):
         return Addict({
             self.filter_pattern: dict(
-                headers=self.headers_override,
                 actions=self.actions_override,
+                **(self.headers_override or {}),
             )
         })
 

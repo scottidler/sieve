@@ -3,6 +3,7 @@
 import os
 import sys
 
+import logging
 from argparse import ArgumentParser, RawDescriptionHelpFormatter, Action
 from addict import Addict
 from ruamel import yaml
@@ -37,13 +38,33 @@ class HeaderAction(Action):
         }
         setattr(namespace, self.dest, headers)
 
+def setup_logging(verbose):
+    match verbose:
+        case 0:
+            level=logging.ERROR #default, minimal
+        case 1:
+            level=logging.WARNING #warnings and errors only
+        case 2:
+            level=logging.INFO #info, warnings, and errors
+        case _:
+            level=logging.DEBUG #spammy
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s|%(name)s|%(message)s',
+        handlers=[
+            logging.FileHandler('sieve.log'),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+
 def main(args):
     parser = ArgumentParser()
     parser.add_argument(
         '-v', '--verbose',
         dest='verbose',
-        action='store_true',
-        help='enable verbose logging')
+        action='count',
+        default=0,
+        help='v1=WARNING, v2=INFO, v3=DEBUG')
     parser.add_argument(
         '-n', '--nerf',
         action='store_true',
@@ -87,6 +108,8 @@ def main(args):
         nargs='+',
         help='set actions to perform')
     ns = parser.parse_args(args)
+    setup_logging(ns.verbose)
+    logging.info(f'ns={ns}')
     if ns.query_override and not ns.spec_pattern:
         parser.error('spec-name is required when query is specified')
     if ns.headers_override:

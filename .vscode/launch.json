@@ -5,11 +5,29 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "test headers",
+            "name": "header override",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/sieve/cli.py",
             "args": ["inbox-to-archive", "archive-it", "-H", "to=me"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "nerfed brand new sieve and filter",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/sieve/cli.py",
+            "args": ["bob", "ann", "-q", "in:INBOX", "-a", "archive", "--nerf", "--verbose"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "default",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/sieve/cli.py",
+            "args": [],
             "console": "integratedTerminal",
             "justMyCode": true
         }
