@@ -405,22 +405,26 @@ class Labels:
         )
 
 class Change:
-    def __init__(self, sieve, labels, message_ids):
+    def __init__(self, sieve, labels, message_ids, nerf=False):
         self.sieve = sieve
         self.labels = labels
         self.message_ids = message_ids
+        self.nerf = nerf
 
     def __repr__(self):
-        return f'Change(lables={self.labels}, message_ids={len(self.message_ids)})'
+        return f'Change(lables={self.labels}, message_ids={len(self.message_ids)}, nerf={self.nerf})'
 
     @asyncify
     def execute_batch(self, batch):
         logger.debug(f'execute_batch: labels={self.labels} len(batch)={len(batch)}')
-        body = dict(
-            ids=batch,
-            **self.labels.to_json())
-        result = self.sieve.messages_api.batchModify(userId='me', body=body).execute()
-        logger.debug(f'execute_batch: result={result}')
+        labels = self.labels.to_json()
+        msg = f'execute_batch: labels={labels} len(batch)={len(batch)}'
+        if self.nerf:
+            logger.info(f'NERF: {msg}')
+        else:
+            logger.info(msg)
+            result = self.sieve.messages_api.batchModify(userId='me', body=dict(ids=batch, **labels)).execute()
+            logger.debug(f'execute_batch: result={result}')
         return [result]
 
     async def execute(self):
@@ -430,12 +434,10 @@ class Change:
                     return items[:count], items[1000:]
                 return items, []
             return [], []
-        results = []
         batch, rem = batch_by(self.message_ids, 1000)
         while batch:
-            results += await self.execute_batch(batch)
+            await self.execute_batch(batch)
             batch, rem = batch_by(rem, 1000)
-        return results
 
 class Spec:
     def __init__(self, sieve, name=None, query=None, spammers=None, filters=None, max_results=500, filter_pattern=None, query_override=None):
@@ -534,7 +536,7 @@ class Spec:
             if labels:
                 changes[labels].extend(message_ids)
         return [
-            Change(self.sieve, labels, message_ids)
+            Change(self.sieve, labels, message_ids, self.nerf)
             for labels, message_ids
             in changes.items()
         ]

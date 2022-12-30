@@ -87,7 +87,6 @@ def main(args):
         nargs='+',
         help='set actions to perform')
     ns = parser.parse_args(args)
-    print(ns)
     if ns.query_override and not ns.spec_pattern:
         parser.error('spec-name is required when query is specified')
     if ns.headers_override:
@@ -98,8 +97,6 @@ def main(args):
             parser.error(msg)
     if ns.actions_override and not ns.spec_pattern:
         parser.error('spec-name is required when actions are specified')
-
-    print(ns)
     sieve = Sieve(**ns.__dict__)
     sieve.run()
 
