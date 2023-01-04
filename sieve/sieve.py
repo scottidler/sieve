@@ -315,10 +315,10 @@ class Thread:
     def is_uptodate(self, body):
         def is_uptodate(labels, body):
             if len(intersect(labels, body.addLabelIds)) != len(body.addLabelIds):
-                logger.debug(f'ADD: intersect failed: labels={labels} body.addLabelIds={body.addLabelIds} add_result={intersect(labels, body.addLabelIds)}')
+                logger.error(f'ADD: intersect failed: labels={labels} body.addLabelIds={body.addLabelIds} add_result={intersect(labels, body.addLabelIds)}')
                 return False
             if len(intersect(labels, body.removeLabelIds)) != 0:
-                logger.debug(f'REMOVE: intersect failed: labels={labels} body.removeLabelIds={body.removeLabelIds} remove_result={intersect(labels, body.removeLabelIds)}')
+                logger.error(f'REMOVE: intersect failed: labels={labels} body.removeLabelIds={body.removeLabelIds} remove_result={intersect(labels, body.removeLabelIds)}')
                 return False
             return True
         return all(is_uptodate(labels, body) for labels in self.labels)
@@ -434,15 +434,15 @@ class Change:
 
 class Spec:
     def __init__(
-        self, 
-        sieve, 
-        name=None, 
-        query=None, 
-        spammers=None, 
-        filters=None, 
-        max_results=500, 
-        filter_pattern=None, 
-        query_override=None, 
+        self,
+        sieve,
+        name=None,
+        query=None,
+        spammers=None,
+        filters=None,
+        max_results=500,
+        filter_pattern=None,
+        query_override=None,
         nerf=False):
 
         self.sieve = sieve
@@ -453,7 +453,7 @@ class Spec:
         self.filters = list(chain(*[
             [
                 Filter(
-                    name=f'spammer-{label}',
+                    name=f'spammer-{label}-{item}',
                     **{label: item},
                     actions=[
                         'archive',
@@ -500,38 +500,47 @@ class Spec:
         return thread_ids
 
     async def filter_thread(self, thread, filters):
+        for message in thread.messages:
+            labels = await self.filter_message(message, filters)
+            if labels:
+                return (labels, thread.message_ids)
+            return (None, [])
+
+    async def filter_message(self, message, filters):
         labels = Labels()
         for f in filters:
-            if not f.headers: #if no headers, apply filter
+            logger.debug(f'filter_message: message={message} filter={f}')
+            if not f.headers:
                 labels += self.sieve.actions_to_labels(f.actions)
                 continue
-            matches = [False] * len(f.headers)
-            for i, (h, v) in enumerate(f.headers.items()):
-                if h not in thread.headers:
+            match_ = True
+            for h, v in f.headers.items():
+                logger.info(f'filter_message: h={h} v={v}')
+                if h not in message.headers:
                     break
-                if h in ('subject', 'sender'):
-                    matches[i] = len(FuzzyList(thread.headers[h]).include(v)) > 0
-                elif is_sequence(v):
-                    matches[i] = any([FuzzyList(m.headers[h]).include(*v) for m in thread.messages])
+                message_value = tuplify(message.headers[h])
+                logger.info(f'filter_message: message_value={message_value}')
+                if is_sequence(v):
+                    match_ = len(FuzzyList(message_value).include(*v)) != 0
                 else:
-                    matches[i] = any([FuzzyList(m.headers[h]).include(v) for m in thread.messages])
-            if all(matches):
-                labels += self.sieve.actions_to_lables(f.actions)
-        if labels:
-            return (labels, thread.message_ids)
-        elif self.default:
-            return (self.sieve.actions_to_labels(self.default.actions), thread.message_ids)
-        return (None, [])
+                    match_ = len(FuzzyList(message_value).include(v)) != 0
+                if not match_:
+                    break
+            if match_:
+                logger.debug(f'filter_message: match_={match_}')
+                labels += self.sieve.actions_to_labels(f.actions)
+                break #only apply first matching filter
+        return labels
 
     @asyncify
     def hydrate_thread(self, thread_id):
         logger.debug(f'hydrating thread_id={thread_id}')
         return Thread(
-            sieve=self.sieve, 
+            sieve=self.sieve,
             **self.sieve.threads_api.get(
-                userId='me', 
-                id=thread_id, 
-                format='metadata', 
+                userId='me',
+                id=thread_id,
+                format='metadata',
                 metadataHeaders=METADATA_HEADERS).execute())
 
     async def filter_gmail(self, thread_ids, filters):
@@ -592,7 +601,7 @@ class Sieve:
         logger.debug(self)
 
     def __repr__(self):
-        return f'Sieve(spec_pattern={self.spec_pattern} query_override={self.query_override} filter_pattern={self.filter_pattern} headers_override={self.headers_override} actions_override={self.actions_override} nerf={self.nerf})'
+        return f'Sieve(spec_pattern={self.spec_pattern}, query_override={self.query_override}, filter_pattern={self.filter_pattern}, headers_override={self.headers_override}, actions_override={self.actions_override}, nerf={self.nerf})'
 
     def load_sieve(self, sieve_yml):
         specs = load_yml(sieve_yml)
