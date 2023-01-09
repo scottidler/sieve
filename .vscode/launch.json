@@ -23,6 +23,15 @@
             "justMyCode": true
         },
         {
+            "name": "verbose",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/sieve/cli.py",
+            "args": ["-vvv"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
             "name": "default",
             "type": "python",
             "request": "launch",
