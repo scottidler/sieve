@@ -41,6 +41,7 @@ from leatherman.fuzzy import FuzzyList
 from leatherman.repr import __repr__
 from leatherman.dbg import dbg
 from leatherman.dictionary import head_body
+from leatherman.yaml import yaml_format
 
 logging.getLogger('googleapiclient').setLevel(logging.ERROR)
 logger = logging.getLogger('sieve')
@@ -49,6 +50,8 @@ SCOPES = [
 	'https://mail.google.com/', ## for gmail
     ## 'https://www.googleapis.com/auth/admin.directory.group.readonly', ## for groups
 ]
+
+GMAIL_BATCH_LIMIT = 1000
 
 METADATA_HEADERS = [
     'to',
@@ -288,6 +291,10 @@ class Thread:
     __str__ = __repr__
 
     @property
+    def subject(self):
+        return self.messages[0].headers.get('subject', 'UNKNOWN')
+
+    @property
     def label_ids(self):
         '''labels: plural'''
         return [m.labelIds for m in self.messages]
@@ -322,6 +329,9 @@ class Thread:
                 return False
             return True
         return all(is_uptodate(labels, body) for labels in self.labels)
+
+    def to_output(self):
+        return f'[{len(self.messages)}] {self.subject}'
 
 class Filter:
     def __init__(self, name=None, actions=None, **headers):
@@ -397,16 +407,38 @@ class Labels:
             removeLabelIds=self.remove_ids,
         )
 
+    def to_output(self):
+        output = ''
+        if self.add:
+            output += 'add: ' + ' '.join([f'({k}, {v})' for k, v in self.add.items()])
+        if self.remove:
+            output =  output + ' ' if output else output
+            output += 'remove: ' + ' '.join([f'({k}, {v})' for k, v in self.remove.items()])
+        return output
+
 class Change:
-    def __init__(self, sieve, labels, message_ids, nerf=False):
+    def __init__(self, sieve, labels, threads, nerf=False):
         self.sieve = sieve
         self.labels = labels
-        self.message_ids = message_ids
+        self.threads = threads
         self.nerf = nerf
         logger.debug(self)
 
     def __repr__(self):
-        return f'Change(lables={self.labels}, message_ids={len(self.message_ids)}, nerf={self.nerf})'
+        return f'Change(lables={self.labels}, threads={len(self.threads)}, nerf={self.nerf})'
+
+    def to_output(self):
+        return {
+            self.labels.to_output(): [
+                thread.to_output()
+                for thread
+                in self.threads
+            ]
+        }
+
+    @property
+    def message_ids(self):
+        return [m.id for t in self.threads for m in t.messages]
 
     @asyncify
     def execute_batch(self, batch):
@@ -424,13 +456,13 @@ class Change:
         def batch_by(items, count):
             if items:
                 if len(items) > count:
-                    return items[:count], items[1000:]
+                    return items[:count], items[GMAIL_BATCH_LIMIT:]
                 return items, []
             return [], []
-        batch, rem = batch_by(self.message_ids, 1000)
+        batch, rem = batch_by(self.message_ids, GMAIL_BATCH_LIMIT)
         while batch:
             await self.execute_batch(batch)
-            batch, rem = batch_by(rem, 1000)
+            batch, rem = batch_by(rem, GMAIL_BATCH_LIMIT)
 
 class Spec:
     def __init__(
@@ -499,27 +531,34 @@ class Spec:
             threads_req = self.sieve.threads_api.list_next(threads_req, threads_res)
         return thread_ids
 
-    async def filter_thread(self, thread, filters):
-        for message in thread.messages:
-            labels = await self.filter_message(message, filters)
-            if labels:
-                return (labels, thread.message_ids)
-            return (None, [])
+    @asyncify
+    def hydrate_thread(self, thread_id):
+        logger.debug(f'hydrating thread_id={thread_id}')
+        return Thread(
+            sieve=self.sieve,
+            **self.sieve.threads_api.get(
+                userId='me',
+                id=thread_id,
+                format='metadata',
+                metadataHeaders=METADATA_HEADERS).execute())
 
     async def filter_message(self, message, filters):
         labels = Labels()
         for f in filters:
+            match_ = False
             logger.debug(f'filter_message: message={message} filter={f}')
             if not f.headers:
                 labels += self.sieve.actions_to_labels(f.actions)
+                match_ = True
                 continue
-            match_ = True
             for h, v in f.headers.items():
-                logger.info(f'filter_message: h={h} v={v}')
+                logger.debug(f'filter_message: h={h} v={v}')
                 if h not in message.headers:
                     break
+                if v == 'me':
+                    v = self.sieve.me
                 message_value = tuplify(message.headers[h])
-                logger.info(f'filter_message: message_value={message_value}')
+                logger.debug(f'filter_message: message_value={message_value}')
                 if is_sequence(v):
                     match_ = len(FuzzyList(message_value).include(*v)) != 0
                 else:
@@ -532,29 +571,31 @@ class Spec:
                 break #only apply first matching filter
         return labels
 
-    @asyncify
-    def hydrate_thread(self, thread_id):
-        logger.debug(f'hydrating thread_id={thread_id}')
-        return Thread(
-            sieve=self.sieve,
-            **self.sieve.threads_api.get(
-                userId='me',
-                id=thread_id,
-                format='metadata',
-                metadataHeaders=METADATA_HEADERS).execute())
+    async def filter_thread(self, thread, filters):
+        for message in thread.messages:
+            labels = await self.filter_message(message, filters)
+            if labels:
+                return labels
+            return None
 
     async def filter_gmail(self, thread_ids, filters):
         changes = defaultdict(list)
         for thread_id in thread_ids:
             thread = await self.hydrate_thread(thread_id)
-            labels, message_ids = await self.filter_thread(thread, filters)
+            labels = await self.filter_thread(thread, filters)
             if labels:
-                changes[labels].extend(message_ids)
+                changes[labels].append(thread)
         return [
-            Change(self.sieve, labels, message_ids, self.nerf)
-            for labels, message_ids
+            Change(self.sieve, labels, threads, self.nerf)
+            for labels, threads
             in changes.items()
         ]
+
+    async def generate_output(self, changes):
+        output = []
+        for change in changes:
+            output.append(change.to_output())
+        return yaml_format(output)
 
     async def execute_changes(self, changes):
         for change in changes:
@@ -566,7 +607,9 @@ class Spec:
         thread_ids = await self.get_threads_ids(query=self.query, max_results=self.max_results)
         logger.log(logging.NOTSET, f'# of thead_ids={len(thread_ids)}')
         changes = await self.filter_gmail(thread_ids, self.filters)
-        logger.log(logging.NOTSET, f'# of changes={len(changes)}')
+        logger.info(f'# of changes={len(changes)}')
+        output = await self.generate_output(changes)
+        print(output)
         await self.execute_changes(changes)
 
 class Sieve:
@@ -602,6 +645,10 @@ class Sieve:
 
     def __repr__(self):
         return f'Sieve(spec_pattern={self.spec_pattern}, query_override={self.query_override}, filter_pattern={self.filter_pattern}, headers_override={self.headers_override}, actions_override={self.actions_override}, nerf={self.nerf})'
+
+    @property
+    def me(self):
+        return self.profile['emailAddress']
 
     def load_sieve(self, sieve_yml):
         specs = load_yml(sieve_yml)
