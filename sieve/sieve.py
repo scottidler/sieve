@@ -257,6 +257,10 @@ class Message:
         return f'Message(id={self.id}, thread_id={self.threadId}, labelIds={self.labelIds}, historyId={self.historyId})'
 
     @property
+    def subject(self):
+        return self.headers.get('subject')
+
+    @property
     @lru_cache()
     def labels(self):
         '''labels: plural'''
@@ -331,7 +335,7 @@ class Thread:
         return all(is_uptodate(labels, body) for labels in self.labels)
 
     def to_output(self):
-        return f'[{len(self.messages)}] {self.subject}'
+        return f'({len(self.messages)}) {self.subject}'
 
 class Filter:
     def __init__(self, name=None, actions=None, **headers):
@@ -345,6 +349,24 @@ class Filter:
         logger.debug(self)
 
     __repr__ = __repr__
+
+    def __hash__(self):
+        return hash((
+            self.name,
+            self.actions,
+            tuple(self.headers.keys()),
+            tuple(self.headers.values())
+        ))
+
+    def __eq__(self, other):
+        if isinstance(other, Filter):
+            return self.name == other.name and self.actions == other.actions and self.headers == other.headers
+        return False
+
+    def __bool__(self):
+        if self.name and self.actions and self.headers:
+            return True
+        return False
 
     def to_json(self):
         return {
@@ -417,19 +439,19 @@ class Labels:
         return output
 
 class Change:
-    def __init__(self, sieve, labels, threads, nerf=False):
+    def __init__(self, sieve, filter, threads, nerf=False):
         self.sieve = sieve
-        self.labels = labels
+        self.filter = filter
         self.threads = threads
         self.nerf = nerf
         logger.debug(self)
 
     def __repr__(self):
-        return f'Change(lables={self.labels}, threads={len(self.threads)}, nerf={self.nerf})'
+        return f'Change(filter={self.filter}, threads={len(self.threads)}, nerf={self.nerf})'
 
     def to_output(self):
         return {
-            self.labels.to_output(): [
+            self.filter.name: [
                 thread.to_output()
                 for thread
                 in self.threads
@@ -442,8 +464,9 @@ class Change:
 
     @asyncify
     def execute_batch(self, batch):
-        logger.debug(f'execute_batch: labels={self.labels} len(batch)={len(batch)}')
-        labels = self.labels.to_json()
+        labels = self.sieve.actions_to_labels(self.filter.actions)
+        logger.debug(f'execute_batch: labels={labels} len(batch)={len(batch)}')
+        labels = labels.to_json()
         msg = f'execute_batch: labels={labels} len(batch)={len(batch)}'
         if self.nerf:
             logger.info(f'NERF: {msg}')
@@ -500,7 +523,7 @@ class Spec:
         self.filters += [
             Filter(
                 name,
-                **body,
+                **self._interpolate(**body)
             )
             for name, body
             in (filters or {}).items()
@@ -518,6 +541,23 @@ class Spec:
     __repr__ = __repr__
 
     __str__ = __repr__
+
+    def _interpolate(self, **headers):
+        def interpolate_key(key):
+            return {
+                'fr': 'from',
+            }.get(key, key)
+        def interpolate_value(value):
+            if isinstance(value, str):
+                return {
+                    'me': self.sieve.me,
+                }.get(value, value)
+            return value
+        return {
+            interpolate_key(key): interpolate_value(value)
+            for key, value
+            in headers.items()
+        }
 
     @asyncify
     def get_threads_ids(self, query=None, max_results=None):
@@ -543,20 +583,19 @@ class Spec:
                 metadataHeaders=METADATA_HEADERS).execute())
 
     async def filter_message(self, message, filters):
-        labels = Labels()
+        matches = []
         for f in filters:
             match_ = False
             logger.debug(f'filter_message: message={message} filter={f}')
             if not f.headers:
-                labels += self.sieve.actions_to_labels(f.actions)
+                matches.append(f)
                 match_ = True
                 continue
             for h, v in f.headers.items():
                 logger.debug(f'filter_message: h={h} v={v}')
                 if h not in message.headers:
+                    match_ = False
                     break
-                if v == 'me':
-                    v = self.sieve.me
                 message_value = tuplify(message.headers[h])
                 logger.debug(f'filter_message: message_value={message_value}')
                 if is_sequence(v):
@@ -567,24 +606,24 @@ class Spec:
                     break
             if match_:
                 logger.debug(f'filter_message: match_={match_}')
-                labels += self.sieve.actions_to_labels(f.actions)
+                matches.append(f)
                 break #only apply first matching filter
-        return labels
+        return matches
 
     async def filter_thread(self, thread, filters):
+        matches = []
         for message in thread.messages:
-            labels = await self.filter_message(message, filters)
-            if labels:
-                return labels
-            return None
+            matches += await self.filter_message(message, filters)
+        return list(set(matches))
 
     async def filter_gmail(self, thread_ids, filters):
         changes = defaultdict(list)
         for thread_id in thread_ids:
             thread = await self.hydrate_thread(thread_id)
-            labels = await self.filter_thread(thread, filters)
-            if labels:
-                changes[labels].append(thread)
+            matches = await self.filter_thread(thread, filters)
+            if matches:
+                for filter_ in matches:
+                    changes[filter_].append(thread)
         return [
             Change(self.sieve, labels, threads, self.nerf)
             for labels, threads
