@@ -80,6 +80,10 @@ def main(args):
         default='./sieve.yml',
         help='default="%(default)s"; path to the sieve config file')
     parser.add_argument(
+        '-S', '--show-filters',
+        action='store_true',
+        help='toggle showing the filters after loading')
+    parser.add_argument(
         'spec_pattern',
         metavar='spec-pattern',
         nargs='?',

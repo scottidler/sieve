@@ -662,6 +662,7 @@ class Sieve:
             headers_override=None,
             actions_override=None,
             nerf=False,
+            show_filters=False,
             **kwargs):
 
         creds = auth(creds_json)
@@ -678,6 +679,7 @@ class Sieve:
         self.directory = build('admin', 'directory_v1', credentials=creds)
         self.groups_api = self.directory.groups()
         self.nerf = nerf
+        self.show_filters = show_filters
         specs = self.load_sieve(sieve_yml)
         self.specs = [Spec(self, nerf=self.nerf, **spec) for spec in specs]
         logger.debug(self)
@@ -791,7 +793,7 @@ class Sieve:
                         raise e
         return Labels(add, remove)
 
-    def show_filters(self):
+    def do_show_filters(self):
         pp([w.to_json() for w in self.specs])
 
     async def _run(self):
@@ -799,6 +801,9 @@ class Sieve:
             await spec.run()
 
     def run(self):
+        if self.show_filters:
+            self.do_show_filters()
+            return
         def signal_handler(*args):
             LOOP.create_task(_signal_handler())
 
