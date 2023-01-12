@@ -254,7 +254,7 @@ class Message:
         logger.debug(self)
 
     def __repr__(self):
-        return f'Message(id={self.id}, thread_id={self.threadId}, labelIds={self.labelIds}, historyId={self.historyId})'
+        return f'Message(id={self.id}, thread_id={self.threadId}, labelIds={self.labelIds}, subject={self.subject})'
 
     @property
     def subject(self):
@@ -274,8 +274,12 @@ class Message:
     @lru_cache()
     def headers(self):
         '''headers: plural'''
+        def validate(key, value):
+            if key in ('from', 'to', 'cc', 'bcc', 'reply-to', 'sender', 'delivered-to', 'resent-to', 'resent-cc', 'resent-bcc', 'resent-sender', 'resent-from'):
+                return format_emails(value)
+            return value
         return {
-            header['name'].lower():header['value']
+            header['name'].lower(): validate(header['name'].lower(), header['value'])
             for header
             in self.payload.headers
         }
