@@ -196,9 +196,6 @@ def pf(obj):
 def pp(obj):
     print(pf(obj))
 
-def ppl(obj):
-    logger.info(pf(obj))
-
 def tuplify(obj):
     if obj is None:
         return ()
@@ -207,11 +204,6 @@ def tuplify(obj):
     elif isinstance(obj, tuple):
         return obj
     return tuple([obj])
-
-def compare(item, test):
-    if item:
-        return item == test
-    return False
 
 def format_emails(s, regex=re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b')):
     if s:
