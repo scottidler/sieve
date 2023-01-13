@@ -23,15 +23,6 @@
             "justMyCode": true
         },
         {
-            "name": "sieve1.yml",
-            "type": "python",
-            "request": "launch",
-            "program": "${workspaceFolder}/sieve/cli.py",
-            "args": ["--sieve-yml", "sieve1.yml", "-vvv"],
-            "console": "integratedTerminal",
-            "justMyCode": true
-        },
-        {
             "name": "verbose",
             "type": "python",
             "request": "launch",
