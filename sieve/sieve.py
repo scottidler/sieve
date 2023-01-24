@@ -338,7 +338,7 @@ class Filter:
         self.name = name
         self.actions = tuplify(actions)
         self.headers = {
-            h: tuplify(v) if h in ('fr', 'cc', 'bcc') else v
+            h: tuplify(v) if h in ('from', 'cc', 'bcc') else v
             for h, v
             in headers.items()
         }
