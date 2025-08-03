@@ -1,5 +1,7 @@
 # Gmail Automation System Architecture
 
+> **⚠️ NOTE**: This document contains outdated references to "personal/corporate" naming. The actual implementation now uses "home/work" consistently. This document serves as a reference for the overall system design but may not reflect current implementation details.
+
 ## Table of Contents
 - [Overview](#overview)
 - [System Architecture](#system-architecture)
@@ -19,11 +21,11 @@
 
 ## Overview
 
-This system automates Gmail email management using Google Apps Script, providing intelligent filtering, thread-aware aging, and priority detection for both personal and corporate Gmail accounts. The solution addresses the limitations found in previous IMAP-based approaches by leveraging Gmail's native API for full threading support.
+This system automates Gmail email management using Google Apps Script, providing intelligent filtering, thread-aware aging, and priority detection for both home and work Gmail accounts. The solution addresses the limitations found in previous IMAP-based approaches by leveraging Gmail's native API for full threading support.
 
 ### Key Features
 - **Thread-aware processing**: Proper Gmail thread handling using native APIs
-- **Multi-account support**: Separate instances for personal and corporate accounts
+- **Multi-account support**: Separate instances for home and work accounts
 - **Intelligent priority detection**: Company email analysis with superior identification
 - **Tiered age-off system**: Different TTL for read vs unread messages
 - **GitHub-based deployment**: Full CI/CD pipeline with automated deployments
@@ -54,8 +56,8 @@ graph TB
     end
 
     subgraph "Configuration"
-        J[personal-config.yml] --> D
-        K[corporate-config.yml] --> E
+        J[home-config.yml] --> D
+        K[work-config.yml] --> E
     end
 
     subgraph "Monitoring"
@@ -111,17 +113,17 @@ Each account has its own YAML configuration file based on the successful `imap-f
 
 **Note:** YAML configuration uses hyphens (`-`) for multi-word keys (e.g., `message-filters`, `script-id`, `exclude-labels`, `require-all-messages-aged`), which are automatically converted to underscores (`_`) when accessed in JavaScript/TypeScript code (e.g., `config.message_filters`, `account.script_id`, `filter.exclude_labels`, `threading.require_all_messages_aged`).
 
-#### Personal Account (`configs/personal-config.yml`)
+#### Home Account (`configs/home-config.yml`)
 ```yaml
-# Personal Gmail Configuration
+# Home Gmail Configuration
 account:
-  name: "personal"
+  name: "home"
   email: "scott.a.idler@gmail.com"
-  script-id: "your-personal-script-id"
+  script-id: "your-home-script-id"
 
 # Message filtering rules
 message-filters:
-  # High-priority personal emails
+  # High-priority home emails
   - name: "family-urgent"
     to: ['scott.a.idler@gmail.com']
     cc: []
@@ -176,13 +178,13 @@ threading:
   recent-activity-threshold: "24h"
 ```
 
-#### Corporate Account (`configs/corporate-config.yml`)
+#### Work Account (`configs/work-config.yml`)
 ```yaml
-# Corporate Gmail Configuration (Tatari)
+# Work Gmail Configuration (Tatari)
 account:
-  name: "corporate"
+  name: "work"
   email: "scott.idler@tatari.tv"
-  script-id: "your-corporate-script-id"
+  script-id: "your-work-script-id"
 
 # Company hierarchy for superior detection
 company:
@@ -232,13 +234,13 @@ state-filters:
     labels: ['Important', 'Starred']
     ttl: "keep"
 
-  # Standard corporate cleanup - more aggressive
-  - name: "corporate-cleanup"
+  # Standard work cleanup - more aggressive
+  - name: "work-cleanup"
     labels: ['INBOX']
     exclude-labels: ['Important', 'Starred']
     ttl:
-      read: "5d"      # Shorter for corporate
-      unread: "14d"   # Shorter for corporate
+      read: "5d"      # Shorter for work
+      unread: "14d"   # Shorter for work
     actions:
       - type: "move"
         destination: "Processed"
@@ -254,12 +256,11 @@ state-filters:
 threading:
   enabled: true
   require-all-messages-aged: true
-  recent-activity-threshold: "12h"  # More aggressive for corporate
+  recent-activity-threshold: "12h"  # More aggressive for work
 
-# Corporate-specific settings
-corporate-settings:
-  # Don't auto-process emails during business hours
-  quiet-hours:
+# Work-specific settings (but using flat structure now)
+# Don't auto-process emails during business hours
+quiet-hours:
     enabled: true
     start: "09:00"
     end: "17:00"
@@ -278,18 +279,18 @@ corporate-settings:
 ### Multi-Account Deployment Architecture
 
 ```yaml
-# .github/workflows/deploy-personal.yml
-name: Deploy Personal Gmail Automation
+# .github/workflows/deploy-home.yml
+name: Deploy Home Gmail Automation
 on:
   push:
     branches: [main]
     paths:
       - 'src/**'
-      - 'configs/personal-config.yml'
-      - '.github/workflows/deploy-personal.yml'
+      - 'configs/home-config.yml'
+      - '.github/workflows/deploy-home.yml'
 
 jobs:
-  deploy-personal:
+  deploy-home:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -316,22 +317,22 @@ jobs:
           clasp push --scriptId ${{ secrets.PERSONAL_SCRIPT_ID }}
           clasp deploy --scriptId ${{ secrets.PERSONAL_SCRIPT_ID }} --description "Deploy $(date)"
         env:
-          CONFIG_TYPE: personal
+          CONFIG_TYPE: home
 ```
 
 ```yaml
-# .github/workflows/deploy-corporate.yml
-name: Deploy Corporate Gmail Automation
+# .github/workflows/deploy-work.yml
+name: Deploy Work Gmail Automation
 on:
   push:
     branches: [main]
     paths:
       - 'src/**'
-      - 'configs/corporate-config.yml'
-      - '.github/workflows/deploy-corporate.yml'
+      - 'configs/work-config.yml'
+      - '.github/workflows/deploy-work.yml'
 
 jobs:
-  deploy-corporate:
+  deploy-work:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -358,7 +359,7 @@ jobs:
           clasp push --scriptId ${{ secrets.CORPORATE_SCRIPT_ID }}
           clasp deploy --scriptId ${{ secrets.CORPORATE_SCRIPT_ID }} --description "Deploy $(date)"
         env:
-          CONFIG_TYPE: corporate
+          CONFIG_TYPE: work
 ```
 
 ### GitHub Secrets Configuration
@@ -398,16 +399,16 @@ gmail-automation/
 │   └── types/
 │       └── index.js           # Type definitions (if using TypeScript)
 ├── configs/
-│   ├── personal-config.yml
-│   └── corporate-config.yml
+│   ├── home-config.yml
+│   └── work-config.yml
 ├── tests/
 │   ├── unit/
 │   ├── integration/
 │   └── fixtures/
 ├── .github/
 │   └── workflows/
-│       ├── deploy-personal.yml
-│       ├── deploy-corporate.yml
+│       ├── deploy-home.yml
+│       ├── deploy-work.yml
 │       └── test.yml
 ├── package.json
 ├── .clasp.json
@@ -745,15 +746,15 @@ class GmailAutomation {
   getConfigType() {
     // Apps Script doesn't have process.env, use PropertiesService
     const properties = PropertiesService.getScriptProperties();
-    return properties.getProperty('CONFIG_TYPE') || 'personal';
+    return properties.getProperty('CONFIG_TYPE') || 'home';
   }
 
   loadConfiguration(configType) {
     // In Apps Script, configs are embedded during deployment
     switch (configType) {
-      case 'personal':
+      case 'home':
         return PERSONAL_CONFIG; // Injected during build
-      case 'corporate':
+      case 'work':
         return CORPORATE_CONFIG; // Injected during build
       default:
         throw new Error(`Unknown config type: ${configType}`);
@@ -764,8 +765,8 @@ class GmailAutomation {
     try {
       this.logger.info(`Starting Gmail automation for ${this.config.account.name}`);
 
-      // Respect quiet hours for corporate account
-      if (this.config.corporate_settings?.quiet_hours?.enabled) {
+      // Respect quiet hours for work account
+      if (this.config.work_settings?.quiet_hours?.enabled) {
         if (this.isQuietHours()) {
           this.logger.info('Skipping execution during quiet hours');
           return;
@@ -868,7 +869,7 @@ export interface Config {
   'state-filters': StateFilter[];
   threading: ThreadingConfig;
   company?: CompanyConfig;
-  corporate_settings?: CorporateSettings;
+  work_settings?: WorkSettings;
 }
 
 export interface AccountConfig {
@@ -1023,7 +1024,7 @@ class GmailAutomation {
   }
 
   private shouldSkipExecution(): boolean {
-    if (!this.config.corporate_settings?.quiet_hours?.enabled) {
+    if (!this.config.work_settings?.quiet_hours?.enabled) {
       return false;
     }
 
@@ -1182,8 +1183,8 @@ clasp create --type standalone --title "Gmail Automation - Personal"
 clasp create --type standalone --title "Gmail Automation - Corporate"
 
 # Configure for local development
-echo '{"scriptId":"your-personal-script-id"}' > .clasp-personal.json
-echo '{"scriptId":"your-corporate-script-id"}' > .clasp-corporate.json
+echo '{"scriptId":"your-home-script-id"}' > .clasp-home.json
+echo '{"scriptId":"your-work-script-id"}' > .clasp-work.json
 ```
 
 ### Development Commands
@@ -1196,10 +1197,10 @@ npm run lint           # Lint code
 npm run format         # Format code
 
 # Deployment
-npm run push:personal   # Push to personal account
-npm run push:corporate  # Push to corporate account
-npm run deploy:personal # Deploy personal account
-npm run deploy:corporate # Deploy corporate account
+npm run push:home   # Push to home account
+npm run push:work  # Push to work account
+npm run deploy:home # Deploy home account
+npm run deploy:work # Deploy work account
 ```
 
 ### Git Workflow

@@ -5,7 +5,7 @@ A TypeScript-based Gmail automation system using Google Apps Script with intelli
 ## Features
 
 - **Thread-aware processing**: Proper Gmail thread handling using native APIs
-- **Multi-account support**: Separate instances for personal and corporate accounts
+- **Multi-account support**: Separate instances for home and work accounts
 - **Intelligent filtering**: Message-based and state-based (age-off) filtering rules
 - **Superior detection**: Special handling for company hierarchy emails
 - **GitHub deployment**: Automated CI/CD pipeline with dual account deployment
@@ -23,8 +23,8 @@ npm install
 
 1. Go to [Google Apps Script](https://script.google.com)
 2. Create two new projects:
-   - "Sieve - Personal Gmail"
-   - "Sieve - Corporate Gmail"
+   - "Sieve - Home Gmail"
+   - "Sieve - Work Gmail"
 3. Note the Script IDs from the URLs
 
 ### 3. Setup Clasp Authentication
@@ -44,17 +44,17 @@ clasp login
 Add these secrets to your GitHub repository:
 
 ```
-CLASP_TOKEN_PERSONAL=<contents of ~/.clasprc.json>
-CLASP_TOKEN_CORPORATE=<contents of ~/.clasprc.json>
-PERSONAL_SCRIPT_ID=<your personal script ID>
-CORPORATE_SCRIPT_ID=<your corporate script ID>
+SIEVE_CLASP_TOKEN_HOME=<contents of ~/.clasprc.json>
+SIEVE_CLASP_TOKEN_WORK=<contents of ~/.clasprc.json>
+SIEVE_HOME_SCRIPT_ID=<your home script ID>
+SIEVE_WORK_SCRIPT_ID=<your work script ID>
 ```
 
 ### 5. Update Configuration Files
 
 Edit the configuration files:
-- `configs/personal-config.yml` - Personal Gmail rules
-- `configs/corporate-config.yml` - Corporate Gmail rules
+- `configs/home-config.yml` - Home Gmail rules
+- `configs/work-config.yml` - Work Gmail rules
 
 Replace the placeholder script IDs and email addresses with your actual values.
 
@@ -89,11 +89,11 @@ npm run format
 ### Manual Deployment
 
 ```bash
-# Deploy to personal account
-npm run deploy:personal
+# Deploy to home account
+npm run deploy:home
 
-# Deploy to corporate account
-npm run deploy:corporate
+# Deploy to work account
+npm run deploy:work
 ```
 
 ### Testing
@@ -111,14 +111,14 @@ runSieve()
 
 ## Configuration
 
-### Personal Account (`configs/personal-config.yml`)
+### Home Account (`configs/home-config.yml`)
 
 - Family/friend priority detection
 - Newsletter management
 - Relaxed age-off rules (7d read, 21d unread)
 - 24h recent activity threshold
 
-### Corporate Account (`configs/corporate-config.yml`)
+### Work Account (`configs/work-config.yml`)
 
 - Company superior detection
 - Direct message prioritization
@@ -146,11 +146,11 @@ sieve/
 │   └── types/
 │       └── index.ts         # TypeScript definitions
 ├── configs/
-│   ├── personal-config.yml  # Personal Gmail rules
-│   └── corporate-config.yml # Corporate Gmail rules
+│   ├── home-config.yml      # Home Gmail rules
+│   └── work-config.yml      # Work Gmail rules
 ├── .github/workflows/
-│   ├── deploy-personal.yml  # Personal deployment
-│   └── deploy-corporate.yml # Corporate deployment
+│   ├── deploy-home.yml      # Home deployment
+│   └── deploy-work.yml      # Work deployment
 └── docs/
     └── architecture.md      # Detailed architecture
 ```

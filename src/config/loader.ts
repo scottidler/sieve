@@ -68,7 +68,7 @@ export class ConfigLoader {
           superiors: config.company.superiors
         }
       }),
-            ...(config['quiet-hours'] && { 
+            ...(config['quiet-hours'] && {
         quiet_hours: {
           enabled: config['quiet-hours'].enabled,
           start: config['quiet-hours'].start,
@@ -76,8 +76,8 @@ export class ConfigLoader {
           timezone: config['quiet-hours'].timezone
         }
       }),
-      ...(config['emergency-keywords'] && { 
-        emergency_keywords: config['emergency-keywords'] 
+      ...(config['emergency-keywords'] && {
+        emergency_keywords: config['emergency-keywords']
       })
     };
   }
