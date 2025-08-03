@@ -28,7 +28,7 @@ function testDeployment(): void {
   console.log('📅 Timestamp:', new Date().toISOString());
 
   try {
-    const sieve = new Sieve();
+    new Sieve();
     console.log('✅ Sieve instance created successfully');
   } catch (error) {
     console.error('❌ Failed to create Sieve instance:', error);

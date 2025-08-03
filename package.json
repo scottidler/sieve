@@ -24,8 +24,7 @@
   "license": "MIT",
   "dependencies": {
     "@google/clasp": "*",
-    "js-yaml": "*",
-    "yaml": "*"
+    "js-yaml": "*"
   },
   "devDependencies": {
     "@types/google-apps-script": "*",
