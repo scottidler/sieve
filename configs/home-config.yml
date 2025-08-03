@@ -58,4 +58,4 @@ threading:
   # Only age-off threads when ALL messages meet criteria
   require-all-messages-aged: true
   # Preserve threads with recent activity
-  recent-activity-threshold: "24h"
+  recent-activity-threshold: "24h"# Trigger workflow
