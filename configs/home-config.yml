@@ -59,3 +59,4 @@ threading:
   require-all-messages-aged: true
   # Preserve threads with recent activity
   recent-activity-threshold: "24h"# Trigger workflow
+# Updated clasp permissions
