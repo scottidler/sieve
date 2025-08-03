@@ -52,9 +52,12 @@ jobs:
       - name: Setup clasp authentication
         run: |
           echo "Setting up clasp authentication..."
-          cat > ~/.clasprc.json << 'EOF'
-          ${{ secrets.SIEVE_CLASP_TOKEN_WORK }}
-          EOF
+          echo '${{ secrets.SIEVE_CLASP_TOKEN_WORK }}' > ~/.clasprc.json
+          
+      - name: Validate clasp config
+        run: |
+          echo "Validating .clasprc.json..."
+          jq . ~/.clasprc.json
 
       - name: Create clasp config
         run: |
