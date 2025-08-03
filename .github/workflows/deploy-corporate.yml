@@ -1,0 +1,84 @@
+name: Deploy Work Gmail Sieve
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'configs/corporate-config.yml'
+      - '.github/workflows/deploy-corporate.yml'
+      - 'package.json'
+      - 'tsconfig.json'
+      - 'appsscript.json'
+  workflow_dispatch:
+
+jobs:
+  deploy-work:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Embed configuration
+        run: |
+          echo "Embedding configuration..."
+          # Install js-yaml to convert YAML to JSON
+          npm install js-yaml
+          # Convert YAML config to JavaScript constant
+          node -e "
+            const yaml = require('js-yaml');
+            const fs = require('fs');
+            const config = yaml.load(fs.readFileSync('configs/corporate-config.yml', 'utf8'));
+            const jsContent = 'const SIEVE_CONFIG = ' + JSON.stringify(config, null, 2) + ';';
+            fs.writeFileSync('dist/config-embed.js', jsContent);
+            console.log('Configuration embedded successfully');
+          "
+
+      - name: Setup clasp authentication
+        run: |
+          echo "Setting up clasp authentication..."
+          mkdir -p ~/.config/@google/clasp
+          echo '${{ secrets.SIEVE_CLASP_TOKEN_WORK }}' > ~/.config/@google/clasp/.clasprc.json
+
+      - name: Install clasp globally
+        run: npm install -g @google/clasp
+
+      - name: Push to Google Apps Script
+        run: |
+          echo "Pushing to Corporate Apps Script..."
+          clasp push --scriptId ${{ secrets.SIEVE_WORK_SCRIPT_ID }} --force
+        env:
+          SCRIPT_ID: ${{ secrets.SIEVE_WORK_SCRIPT_ID }}
+
+      - name: Deploy new version
+        run: |
+          echo "Deploying new version..."
+          clasp deploy --scriptId ${{ secrets.SIEVE_WORK_SCRIPT_ID }} --description "Deploy $(date '+%Y-%m-%d %H:%M:%S')"
+        env:
+          SCRIPT_ID: ${{ secrets.SIEVE_WORK_SCRIPT_ID }}
+
+      - name: Test deployment
+        run: |
+          echo "Testing deployment..."
+          clasp run --scriptId ${{ secrets.SIEVE_WORK_SCRIPT_ID }} --function testDeployment
+        continue-on-error: true
+
+      - name: Notify success
+        if: success()
+        run: |
+          echo "✅ Work Sieve deployment successful!"
+          echo "📧 Account: scott.idler@tatari.tv"
+          echo "🆔 Script ID: ${{ secrets.SIEVE_WORK_SCRIPT_ID }}"

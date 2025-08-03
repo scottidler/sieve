@@ -1,0 +1,91 @@
+# Work Gmail Configuration for Sieve (Tatari)
+account:
+  name: "work"
+  email: "scott.idler@tatari.tv"
+  script-id: "1pQeFqzaVJsPLuSk3CE3jyNcIWF-v2gqdN3DMqijcO0Hm7poWKdbB6p_K"
+
+# Company hierarchy for superior detection
+company:
+  domain: "tatari.tv"
+  superiors:
+    - "ceo@tatari.tv"
+    - "cto@tatari.tv"
+    - "your-manager@tatari.tv"
+
+# Message filtering rules
+message-filters:
+  # Direct messages from company superiors (no CC)
+  - name: "superior-direct"
+    to: ['scott.idler@tatari.tv']
+    cc: []
+    from:
+      patterns: ['*@tatari.tv']
+      superiors-only: true
+    labels: ['INBOX']
+    actions:
+      - type: "star"
+      - type: "flag"
+        label: "Important"
+
+  # Direct messages from any company employee (no CC)
+  - name: "company-direct"
+    to: ['scott.idler@tatari.tv']
+    cc: []
+    from: ['*@tatari.tv']
+    labels: ['INBOX']
+    actions:
+      - type: "flag"
+        label: "Important"
+
+  # Company-wide announcements
+  - name: "company-announcements"
+    from: ['announcements@tatari.tv', 'hr@tatari.tv']
+    labels: ['INBOX']
+    actions:
+      - type: "move"
+        destination: "Company/Announcements"
+
+# State-based filtering
+state-filters:
+  # Protect starred and important messages
+  - name: "vip-protection"
+    labels: ['Important', 'Starred']
+    ttl: "keep"
+
+  # Standard work cleanup - more aggressive
+  - name: "work-cleanup"
+    labels: ['INBOX']
+    exclude-labels: ['Important', 'Starred']
+    ttl:
+      read: "5d"      # Shorter for work
+      unread: "14d"   # Shorter for work
+    actions:
+      - type: "move"
+        destination: "Processed"
+
+  # Final cleanup stage
+  - name: "processed-cleanup"
+    labels: ['Processed']
+    ttl: "30d"
+    actions:
+      - type: "delete"
+
+# Threading configuration
+threading:
+  enabled: true
+  require-all-messages-aged: true
+  recent-activity-threshold: "12h"  # More aggressive for work
+
+# Don't auto-process emails during business hours
+quiet-hours:
+  enabled: true
+  start: "09:00"
+  end: "17:00"
+  timezone: "America/Los_Angeles"
+
+# Emergency bypass keywords
+emergency-keywords:
+  - "URGENT"
+  - "ASAP" 
+  - "EMERGENCY"
+  - "CRITICAL"

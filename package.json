@@ -1,0 +1,47 @@
+{
+  "name": "sieve",
+  "version": "1.0.0",
+  "description": "Gmail automation system using Google Apps Script with thread-aware processing",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist",
+    "prebuild": "npm run clean",
+    "push:home": "npm run build && clasp push --scriptId $SIEVE_HOME_SCRIPT_ID",
+    "push:work": "npm run build && clasp push --scriptId $SIEVE_WORK_SCRIPT_ID",
+    "deploy:home": "npm run build && clasp push --scriptId $SIEVE_HOME_SCRIPT_ID && clasp deploy --scriptId $SIEVE_HOME_SCRIPT_ID",
+    "deploy:work": "npm run build && clasp push --scriptId $SIEVE_WORK_SCRIPT_ID && clasp deploy --scriptId $SIEVE_WORK_SCRIPT_ID",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "format": "prettier --write src/**/*.ts",
+    "format:check": "prettier --check src/**/*.ts"
+  },
+  "keywords": ["gmail", "automation", "google-apps-script", "email", "filtering"],
+  "author": "Scott Idler",
+  "license": "MIT",
+  "dependencies": {
+    "@google/clasp": "*",
+    "js-yaml": "*",
+    "yaml": "*"
+  },
+  "devDependencies": {
+    "@types/google-apps-script": "*",
+    "@types/jest": "*",
+    "@types/node": "*",
+    "@typescript-eslint/eslint-plugin": "*",
+    "@typescript-eslint/parser": "*",
+    "eslint": "*",
+    "eslint-config-prettier": "*",
+    "eslint-plugin-prettier": "*",
+    "jest": "*",
+    "prettier": "*",
+    "ts-jest": "*",
+    "typescript": "*"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
