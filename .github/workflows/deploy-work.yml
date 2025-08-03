@@ -49,7 +49,9 @@ jobs:
       - name: Setup clasp authentication
         run: |
           echo "Setting up clasp authentication..."
-          echo '${{ secrets.SIEVE_CLASP_TOKEN_WORK }}' > ~/.clasprc.json
+          cat > ~/.clasprc.json << 'EOF'
+          ${{ secrets.SIEVE_CLASP_TOKEN_WORK }}
+          EOF
 
       - name: Install clasp globally
         run: npm install -g @google/clasp
