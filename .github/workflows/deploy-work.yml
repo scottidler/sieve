@@ -46,16 +46,16 @@ jobs:
             console.log('Configuration embedded successfully');
           "
 
+            - name: Install clasp globally
+        run: npm install -g @google/clasp
+
       - name: Setup clasp authentication
         run: |
           echo "Setting up clasp authentication..."
           cat > ~/.clasprc.json << 'EOF'
           ${{ secrets.SIEVE_CLASP_TOKEN_WORK }}
           EOF
-
-      - name: Install clasp globally
-        run: npm install -g @google/clasp
-
+          
       - name: Create clasp config
         run: |
           echo '{"scriptId":"${{ secrets.SIEVE_WORK_SCRIPT_ID }}","rootDir":"./dist"}' > .clasp.json
