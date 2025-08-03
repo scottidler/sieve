@@ -55,24 +55,24 @@ jobs:
       - name: Install clasp globally
         run: npm install -g @google/clasp
 
+      - name: Create clasp config
+        run: |
+          echo '{"scriptId":"${{ secrets.SIEVE_WORK_SCRIPT_ID }}","rootDir":"./dist"}' > .clasp.json
+          
       - name: Push to Google Apps Script
         run: |
           echo "Pushing to Work Apps Script..."
-          clasp push --scriptId ${{ secrets.SIEVE_WORK_SCRIPT_ID }} --force
-        env:
-          SCRIPT_ID: ${{ secrets.SIEVE_WORK_SCRIPT_ID }}
+          clasp push --force
 
       - name: Deploy new version
         run: |
           echo "Deploying new version..."
-          clasp deploy --scriptId ${{ secrets.SIEVE_WORK_SCRIPT_ID }} --description "Deploy $(date '+%Y-%m-%d %H:%M:%S')"
-        env:
-          SCRIPT_ID: ${{ secrets.SIEVE_WORK_SCRIPT_ID }}
+          clasp deploy --description "Deploy $(date '+%Y-%m-%d %H:%M:%S')"
 
       - name: Test deployment
         run: |
           echo "Testing deployment..."
-          clasp run --scriptId ${{ secrets.SIEVE_WORK_SCRIPT_ID }} --function testDeployment
+          clasp run --function testDeployment
         continue-on-error: true
 
       - name: Notify success
