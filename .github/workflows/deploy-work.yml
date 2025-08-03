@@ -79,10 +79,35 @@ jobs:
         run: |
           echo '{"scriptId":"${{ secrets.SIEVE_WORK_SCRIPT_ID }}","rootDir":"./dist"}' > .clasp.json
 
+      - name: Test clasp authentication first
+        run: |
+          echo "=== TESTING CLASP AUTH BEFORE PUSH ==="
+          echo "Clasp whoami:"
+          clasp whoami || echo "WHOAMI FAILED"
+          echo ""
+          echo "Clasp status:"
+          clasp status || echo "STATUS FAILED"
+          echo ""
+          echo "Current directory contents:"
+          ls -la
+          echo ""
+          echo ".clasp.json contents:"
+          cat .clasp.json || echo "NO .clasp.json"
+          echo ""
+          
       - name: Push to Google Apps Script
         run: |
           echo "Pushing to Work Apps Script..."
-          clasp push --force
+          echo "=== FULL CLASP PUSH OUTPUT ==="
+          clasp push --force 2>&1 || {
+            echo "=== CLASP PUSH FAILED - DEBUGGING ==="
+            echo "Exit code: $?"
+            echo "Clasp version: $(clasp --version)"
+            echo "Auth file exists: $(ls -la ~/.clasprc.json)"
+            echo "Project file exists: $(ls -la .clasp.json)"
+            echo "Clasp whoami: $(clasp whoami 2>&1)"
+            exit 1
+          }
 
       - name: Deploy new version
         run: |
