@@ -49,8 +49,7 @@ jobs:
       - name: Setup clasp authentication
         run: |
           echo "Setting up clasp authentication..."
-          mkdir -p ~/.config/@google/clasp
-          echo '${{ secrets.SIEVE_CLASP_TOKEN_HOME }}' > ~/.config/@google/clasp/.clasprc.json
+          echo '${{ secrets.SIEVE_CLASP_TOKEN_HOME }}' > ~/.clasprc.json
       
       - name: Install clasp globally
         run: npm install -g @google/clasp
