@@ -49,30 +49,28 @@ jobs:
       - name: Install clasp globally
         run: npm install -g @google/clasp
 
-      - name: Setup clasp authentication
+      - name: Setup clasp authentication via environment
+        env:
+          CLASP_TOKEN: ${{ secrets.SIEVE_CLASP_TOKEN_HOME }}
         run: |
-          echo "Setting up clasp authentication..."
-          cat > ~/.clasprc.json << 'EOF'
-          ${{ secrets.SIEVE_CLASP_TOKEN_HOME }}
-          EOF
+          echo "Setting up clasp authentication via environment..."
+          mkdir -p ~/.config/clasp
+          echo "$CLASP_TOKEN" > ~/.config/clasp/credentials.json
           
       - name: Debug clasp authentication setup
         run: |
           echo "=== Debugging clasp authentication ==="
-          echo "File exists check:"
-          ls -la ~/.clasprc.json || echo "File does not exist"
+          echo "Credentials file exists:"
+          ls -la ~/.config/clasp/credentials.json || echo "File does not exist"
           echo ""
           echo "File size:"
-          wc -c ~/.clasprc.json || echo "Cannot get file size"
+          wc -c ~/.config/clasp/credentials.json || echo "Cannot get file size"
           echo ""
           echo "File contents (first 200 chars):"
-          head -c 200 ~/.clasprc.json || echo "Cannot read file"
+          head -c 200 ~/.config/clasp/credentials.json || echo "Cannot read file"
           echo ""
           echo "JSON validation:"
-          jq . ~/.clasprc.json || echo "JSON validation failed"
-          echo ""
-          echo "Token structure check:"
-          jq '.tokens.default.access_token' ~/.clasprc.json || echo "Cannot find access_token"
+          jq . ~/.config/clasp/credentials.json || echo "JSON validation failed"
           echo ""
           echo "Clasp version:"
           clasp --version || echo "Clasp not found"
