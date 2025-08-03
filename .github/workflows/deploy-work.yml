@@ -82,9 +82,6 @@ jobs:
       - name: Test clasp authentication first
         run: |
           echo "=== TESTING CLASP AUTH BEFORE PUSH ==="
-          echo "Clasp whoami:"
-          clasp whoami || echo "WHOAMI FAILED"
-          echo ""
           echo "Clasp status:"
           clasp status || echo "STATUS FAILED"
           echo ""
@@ -105,7 +102,7 @@ jobs:
             echo "Clasp version: $(clasp --version)"
             echo "Auth file exists: $(ls -la ~/.clasprc.json)"
             echo "Project file exists: $(ls -la .clasp.json)"
-            echo "Clasp whoami: $(clasp whoami 2>&1)"
+            echo "Clasp status: $(clasp status 2>&1)"
             exit 1
           }
 
