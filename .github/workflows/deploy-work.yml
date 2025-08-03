@@ -54,8 +54,26 @@ jobs:
           echo "Setting up clasp authentication..."
           echo '${{ secrets.SIEVE_CLASP_TOKEN_WORK }}' | base64 -d > ~/.clasprc.json
           
-      - name: Validate .clasprc.json
-        run: jq . ~/.clasprc.json
+      - name: Debug clasp authentication setup
+        run: |
+          echo "=== Debugging clasp authentication ==="
+          echo "File exists check:"
+          ls -la ~/.clasprc.json || echo "File does not exist"
+          echo ""
+          echo "File size:"
+          wc -c ~/.clasprc.json || echo "Cannot get file size"
+          echo ""
+          echo "File contents (first 200 chars):"
+          head -c 200 ~/.clasprc.json || echo "Cannot read file"
+          echo ""
+          echo "JSON validation:"
+          jq . ~/.clasprc.json || echo "JSON validation failed"
+          echo ""
+          echo "Token structure check:"
+          jq '.tokens.default.access_token' ~/.clasprc.json || echo "Cannot find access_token"
+          echo ""
+          echo "Clasp version:"
+          clasp --version || echo "Clasp not found"
 
       - name: Create clasp config
         run: |
