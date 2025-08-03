@@ -52,7 +52,9 @@ jobs:
       - name: Setup clasp authentication
         run: |
           echo "Setting up clasp authentication..."
-          echo '${{ secrets.SIEVE_CLASP_TOKEN_HOME }}' | base64 -d > ~/.clasprc.json
+          cat > ~/.clasprc.json << 'EOF'
+          ${{ secrets.SIEVE_CLASP_TOKEN_HOME }}
+          EOF
           
       - name: Debug clasp authentication setup
         run: |
