@@ -3,7 +3,7 @@ name: Deploy Home Gmail Sieve
 on:
   push:
     branches: [main]
-    paths: 
+    paths:
       - 'src/**'
       - 'configs/home-config.yml'
       - '.github/workflows/deploy-home.yml'
@@ -15,22 +15,22 @@ on:
 jobs:
   deploy-home:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-      
+
       - name: Install dependencies
         run: npm install
-      
+
       - name: Build TypeScript
         run: npm run build
-        
+
       - name: Embed configuration
         run: |
           echo "Embedding configuration..."
@@ -45,7 +45,7 @@ jobs:
             fs.writeFileSync('dist/config-embed.js', jsContent);
             console.log('Configuration embedded successfully');
           "
-          
+
       - name: Install clasp globally
         run: npm install -g @google/clasp
 
@@ -55,11 +55,11 @@ jobs:
           cat > ~/.clasprc.json << 'EOF'
           ${{ secrets.SIEVE_CLASP_TOKEN_HOME }}
           EOF
-          
+
       - name: Create clasp config
         run: |
           echo '{"scriptId":"${{ secrets.SIEVE_HOME_SCRIPT_ID }}","rootDir":"./dist"}' > .clasp.json
-          
+
       - name: Push to Google Apps Script
         run: |
           echo "Pushing to Home Apps Script..."
@@ -75,7 +75,7 @@ jobs:
           echo "Testing deployment..."
           clasp run --function testDeployment
         continue-on-error: true
-        
+
       - name: Notify success
         if: success()
         run: |

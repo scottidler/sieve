@@ -55,11 +55,11 @@ jobs:
           cat > ~/.clasprc.json << 'EOF'
           ${{ secrets.SIEVE_CLASP_TOKEN_WORK }}
           EOF
-          
+
       - name: Create clasp config
         run: |
           echo '{"scriptId":"${{ secrets.SIEVE_WORK_SCRIPT_ID }}","rootDir":"./dist"}' > .clasp.json
-          
+
       - name: Push to Google Apps Script
         run: |
           echo "Pushing to Work Apps Script..."
