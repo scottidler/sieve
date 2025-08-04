@@ -46,13 +46,22 @@ jobs:
             console.log('Configuration embedded successfully');
           "
 
-      - name: Install clasp globally
-        run: npm install -g @google/clasp
+      - name: Install specific clasp version
+        run: |
+          echo "Installing specific clasp version to avoid OAuth compatibility issues"
+          npm install -g @google/clasp@2.4.2
 
       - name: Setup clasp authentication (CORRECT LOCATION)
         run: |
           echo "Setting up clasp authentication in ~/.clasprc.json..."
           echo '${{ secrets.SIEVE_CLASP_TOKEN_HOME }}' | base64 -d > ~/.clasprc.json
+          
+          # Also try putting it in the global location as backup
+          mkdir -p ~/.config/clasp
+          cp ~/.clasprc.json ~/.config/clasp/.clasprc.json || true
+          
+          # And try the project directory as another backup
+          cp ~/.clasprc.json ./.clasprc.json || true
           
       - name: Debug clasp authentication setup  
         run: |
@@ -83,6 +92,14 @@ jobs:
           echo ""
           echo "Clasp version:"
           clasp --version || echo "Clasp not found"
+          echo ""
+          echo "Check all possible clasp auth file locations:"
+          ls -la ~/.clasprc.json 2>/dev/null || echo "~/.clasprc.json not found"
+          ls -la ~/.config/clasp/.clasprc.json 2>/dev/null || echo "~/.config/clasp/.clasprc.json not found"
+          ls -la ./.clasprc.json 2>/dev/null || echo "./.clasprc.json not found"
+          echo ""
+          echo "Try clasp whoami to test authentication:"
+          clasp whoami || echo "clasp whoami failed"
 
       - name: Create clasp config
         run: |

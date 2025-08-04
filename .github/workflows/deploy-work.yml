@@ -46,8 +46,10 @@ jobs:
             console.log('Configuration embedded successfully');
           "
 
-            - name: Install clasp globally
-        run: npm install -g @google/clasp
+      - name: Install specific clasp version
+        run: |
+          echo "Installing specific clasp version to avoid OAuth compatibility issues"
+          npm install -g @google/clasp@2.4.2
 
       - name: Setup clasp authentication (CORRECT LOCATION)
         run: |
