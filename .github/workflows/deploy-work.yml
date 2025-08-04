@@ -72,14 +72,17 @@ jobs:
           echo "JSON validation:"
           jq . ~/.clasprc.json || echo "JSON validation failed"
           echo ""
-          echo "Check token structure:"
-          jq '.tokens.default.access_token' ~/.clasprc.json || echo "Cannot find access_token"
+          echo "Check NEW token structure (OAuth client):"
+          jq '.token.access_token' ~/.clasprc.json || echo "Cannot find .token.access_token"
+          echo ""
+          echo "Check OLD token structure (global login):"
+          jq '.tokens.default.access_token' ~/.clasprc.json || echo "Cannot find .tokens.default.access_token"
+          echo ""
+          echo "Check oauth2ClientSettings:"
+          jq '.oauth2ClientSettings' ~/.clasprc.json || echo "Cannot find oauth2ClientSettings"
           echo ""
           echo "Clasp version:"
           clasp --version || echo "Clasp not found"
-          echo ""
-          echo "Find all clasp-related files:"
-          find ~ -name "*clasp*" -type f 2>/dev/null || echo "No clasp files found"
 
       - name: Create clasp config
         run: |
