@@ -50,11 +50,9 @@ jobs:
         run: npm install -g @google/clasp
 
       - name: Setup clasp authentication (CORRECT LOCATION)
-        env:
-          CLASP_TOKEN: ${{ secrets.SIEVE_CLASP_TOKEN_WORK }}
         run: |
           echo "Setting up clasp authentication in ~/.clasprc.json..."
-          echo "$CLASP_TOKEN" > ~/.clasprc.json
+          echo '${{ secrets.SIEVE_CLASP_TOKEN_WORK }}' | base64 -d > ~/.clasprc.json
           
       - name: Debug clasp authentication setup  
         run: |
