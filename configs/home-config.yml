@@ -62,3 +62,4 @@ threading:
 # Updated clasp permissions
 # Test raw JSON clasp tokens
 # Test new OAuth credentials
+# Test base64 clasp authentication
