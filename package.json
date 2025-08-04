@@ -19,7 +19,13 @@
     "format": "prettier --write src/**/*.ts",
     "format:check": "prettier --check src/**/*.ts"
   },
-  "keywords": ["gmail", "automation", "google-apps-script", "email", "filtering"],
+  "keywords": [
+    "gmail",
+    "automation",
+    "google-apps-script",
+    "email",
+    "filtering"
+  ],
   "author": "Scott Idler",
   "license": "MIT",
   "dependencies": {
@@ -38,7 +44,7 @@
     "jest": "*",
     "prettier": "*",
     "ts-jest": "*",
-    "typescript": "*"
+    "typescript": "^5.8.3"
   },
   "engines": {
     "node": ">=18.0.0"
